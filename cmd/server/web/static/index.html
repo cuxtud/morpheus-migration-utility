@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Morpheus Snapshot</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0a0d12;
+    --surface: #10141c;
+    --surface2: #161c28;
+    --border: #1e2636;
+    --border2: #2a3448;
+    --accent: #00d4a8;
+    --accent2: #0099ff;
+    --accent3: #ff6b35;
+    --text: #e2e8f0;
+    --text2: #8899aa;
+    --text3: #4a5568;
+    --success: #22c55e;
+    --error: #ef4444;
+    --warn: #f59e0b;
+    --radius: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 212, 168, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 168, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 24px 60px;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+
+  .logo-text {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-text span {
+    color: var(--accent);
+  }
+
+  .logo-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: rgba(0, 212, 168, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(0, 212, 168, 0.2);
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+
+  /* Steps */
+  .steps {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 32px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    cursor: default;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .step:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .step:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+
+  .step + .step { border-left: none; }
+
+  .step.active {
+    background: rgba(0, 212, 168, 0.08);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .step.done {
+    background: rgba(34, 197, 94, 0.06);
+    border-color: rgba(34, 197, 94, 0.3);
+    color: var(--success);
+  }
+
+  .step-num {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .step.active .step-num { background: var(--accent); color: var(--bg); }
+  .step.done .step-num { background: var(--success); color: var(--bg); }
+
+  .step-label { font-size: 13px; font-weight: 600; }
+
+  /* Panels */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+
+  .panel-title {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text2);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-title::before {
+    content: '';
+    width: 3px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  /* Form */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .form-group.full { grid-column: 1 / -1; }
+
+  label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text2);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  input[type="text"],
+  input[type="url"],
+  input[type="password"] {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  input:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--text3); }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text2);
+    cursor: pointer;
+    padding: 8px 0;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: var(--radius);
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+  }
+
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #00efc0;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(0, 212, 168, 0.3);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border2);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-danger {
+    background: var(--error);
+    color: white;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+  }
+
+  /* Connection status */
+  .conn-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+
+  .conn-status.ok { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.3); color: var(--success); }
+  .conn-status.err { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.3); color: var(--error); }
+  .conn-status.loading { color: var(--text2); }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+
+  .dot.pulse {
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Discovery progress */
+  .discovery-banner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: rgba(0, 153, 255, 0.06);
+    border: 1px solid rgba(0, 153, 255, 0.2);
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent2);
+  }
+
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid rgba(0, 153, 255, 0.3);
+    border-top-color: var(--accent2);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 24px;
+  }
+
+  .stat-chip {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    flex: 1;
+    min-width: 200px;
+    position: relative;
+  }
+
+  .search-box input {
+    width: 100%;
+    padding-left: 36px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text3);
+    font-size: 14px;
+    pointer-events: none;
+  }
+
+  .filter-btns {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .filter-btn {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .filter-btn.active {
+    background: rgba(0, 212, 168, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .filter-btn:hover:not(.active) {
+    border-color: var(--text2);
+    color: var(--text);
+  }
+
+  /* Category groups */
+  .category-group {
+    margin-bottom: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .category-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .category-header:hover { background: var(--border); }
+
+  .category-header.has-selected {
+    background: rgba(0, 212, 168, 0.06);
+    border-bottom: 1px solid rgba(0, 212, 168, 0.15);
+  }
+
+  .cat-check {
+    width: 18px; height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .cat-icon {
+    font-size: 16px;
+    width: 24px;
+    text-align: center;
+  }
+
+  .cat-name {
+    font-weight: 700;
+    font-size: 13px;
+    flex: 1;
+  }
+
+  .cat-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  .cat-selected-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(0, 212, 168, 0.1);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .cat-chevron {
+    color: var(--text3);
+    transition: transform 0.2s;
+    font-size: 12px;
+  }
+
+  .cat-chevron.open { transform: rotate(90deg); }
+
+  /* Item list */
+  .item-list {
+    display: none;
+    background: var(--bg);
+  }
+
+  .item-list.open { display: block; }
+
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 16px 9px 52px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  .item-row:last-child { border-bottom: none; }
+  .item-row:hover { background: var(--surface2); }
+
+  .item-check {
+    width: 15px; height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .item-name {
+    flex: 1;
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .item-subtype {
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--surface2);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .item-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    white-space: nowrap;
+  }
+
+  /* Selection bar */
+  .selection-bar {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+    margin-top: 20px;
+  }
+
+  .sel-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+
+  .sel-count {
+    background: var(--accent);
+    color: var(--bg);
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+  }
+
+  /* Results */
+  .result-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .result-row:last-child { border-bottom: none; }
+
+  .result-icon {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .result-icon.success { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+  .result-icon.error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+  .result-icon.skipped { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
+
+  .result-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-type { color: var(--text3); }
+  .result-msg { color: var(--text2); font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Progress bar */
+  .progress-wrap {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 16px 0;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  /* Alerts */
+  .alert {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    margin: 12px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .alert.warn { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); color: var(--warn); }
+  .alert.info { background: rgba(0, 153, 255, 0.06); border: 1px solid rgba(0, 153, 255, 0.2); color: var(--accent2); }
+  .alert.success { background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.25); color: var(--success); }
+
+  /* Error list */
+  .error-list {
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-top: 12px;
+  }
+
+  .error-list p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--error);
+    padding: 3px 0;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+    gap: 0;
+  }
+
+  .tab {
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    margin-bottom: -1px;
+  }
+
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* Empty state */
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text3);
+  }
+
+  .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
+  .empty h3 { font-size: 16px; color: var(--text2); margin-bottom: 8px; }
+  .empty p { font-size: 13px; font-family: 'JetBrains Mono', monospace; }
+
+  /* Hide/Show utility */
+  .hidden { display: none !important; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+  @media (max-width: 768px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .stats-bar { flex-wrap: wrap; }
+    .stat-chip { min-width: calc(50% - 1px); flex: none; }
+    header { flex-direction: column; gap: 12px; align-items: flex-start; }
+    .steps { gap: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🔄</div>
+      <div>
+        <div class="logo-text">Morpheus <span>Snapshot</span></div>
+        <div class="logo-sub">Appliance Migration Tool</div>
+      </div>
+    </div>
+    <div class="badge" id="appVersion">v1.0.0</div>
+  </header>
+
+  <!-- Steps -->
+  <div class="steps">
+    <div class="step active" id="step1">
+      <div class="step-num">1</div>
+      <div class="step-label">Connect Source</div>
+    </div>
+    <div class="step" id="step2">
+      <div class="step-num">2</div>
+      <div class="step-label">Discover Resources</div>
+    </div>
+    <div class="step" id="step3">
+      <div class="step-num">3</div>
+      <div class="step-label">Select Items</div>
+    </div>
+    <div class="step" id="step4">
+      <div class="step-num">4</div>
+      <div class="step-label">Connect Destination</div>
+    </div>
+    <div class="step" id="step5">
+      <div class="step-num">5</div>
+      <div class="step-label">Migrate</div>
+    </div>
+  </div>
+
+  <!-- VIEW 1: Source Connection -->
+  <div id="view-connect">
+    <div class="panel">
+      <div class="panel-title">Source Appliance</div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Appliance URL</label>
+          <input type="url" id="srcUrl" placeholder="https://morpheus.company.com" />
+        </div>
+        <div class="form-group full">
+          <label>API Token</label>
+          <input type="password" id="srcToken" placeholder="••••••••••••••••••••••••••••••••" />
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="srcSkipTLS" />
+            Skip TLS Verification (self-signed certs)
+          </label>
+        </div>
+      </div>
+
+      <div id="srcStatus" class="hidden"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="testConnection()">🔌 Test Connection</button>
+        <button class="btn btn-primary" id="btnDiscover" onclick="startDiscovery()" disabled>
+          🔍 Connect & Discover
+        </button>
+      </div>
+    </div>
+
+    <div class="alert info">
+      <span>ℹ</span>
+      <span>Your API token can be found in Morpheus under <strong>Admin → User Settings → API Access</strong>. The token requires administrator access for full discovery.</span>
+    </div>
+  </div>
+
+  <!-- VIEW 2: Discovery in progress -->
+  <div id="view-discovering" class="hidden">
+    <div class="panel">
+      <div class="discovery-banner">
+        <div class="spinner"></div>
+        <span id="discoveryMsg">Connecting to appliance...</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar" id="discoveryProgress" style="width: 0%"></div>
+      </div>
+      <div id="discoveryLog" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); max-height: 200px; overflow-y: auto; line-height: 1.8;"></div>
+    </div>
+  </div>
+
+  <!-- VIEW 3: Select items -->
+  <div id="view-select" class="hidden">
+    <div id="discoveryErrors" class="hidden"></div>
+
+    <!-- Stats -->
+    <div class="stats-bar" id="statsBar"></div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Filter by name..." oninput="filterItems()" />
+      </div>
+      <div class="filter-btns" id="categoryFilters"></div>
+    </div>
+
+    <!-- Controls -->
+    <div style="display:flex; gap:10px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+      <button class="btn btn-secondary" onclick="selectAll()">☑ Select All Visible</button>
+      <button class="btn btn-secondary" onclick="deselectAll()">☐ Deselect All</button>
+      <span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text3);" id="visibleCount"></span>
+    </div>
+
+    <!-- Category groups -->
+    <div id="categoryList"></div>
+
+    <!-- Sticky selection bar -->
+    <div class="selection-bar" id="selectionBar">
+      <div class="sel-info">
+        <div class="sel-count" id="selCount">0</div>
+        <span>items selected</span>
+      </div>
+      <button class="btn btn-primary" id="btnNext" onclick="goToDestination()" disabled>
+        Configure Destination →
+      </button>
+    </div>
+  </div>
+
+  <!-- VIEW 4: Destination -->
+  <div id="view-destination" class="hidden">
+    <div class="panel">
+      <div class="panel-title">Destination Appliance</div>
+      <div class="alert warn" style="margin-bottom:20px;">
+        <span>⚠</span>
+        <span>Ensure the destination appliance is running the same or newer version of Morpheus. Migration will attempt to create items; existing items with the same name may be skipped or conflict.</span>
+      </div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Appliance URL</label>
+          <input type="url" id="dstUrl" placeholder="https://morpheus-new.company.com" />
+        </div>
+        <div class="form-group full">
+          <label>API Token</label>
+          <input type="password" id="dstToken" placeholder="••••••••••••••••••••••••••••••••" />
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dstSkipTLS" />
+            Skip TLS Verification
+          </label>
+        </div>
+      </div>
+
+      <div id="dstStatus" class="hidden"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="testDestConnection()">🔌 Test Connection</button>
+        <button class="btn btn-secondary" onclick="goBack()">← Back</button>
+        <button class="btn btn-primary" id="btnMigrate" onclick="startMigration()">
+          🚀 Begin Migration
+        </button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Migration Preview</div>
+      <div id="previewList"></div>
+    </div>
+  </div>
+
+  <!-- VIEW 5: Migration results -->
+  <div id="view-results" class="hidden">
+    <div class="panel">
+      <div class="panel-title">Migration Results</div>
+      <div id="migrationRunning" class="hidden">
+        <div class="discovery-banner">
+          <div class="spinner"></div>
+          <span id="migrationMsg">Migrating items...</span>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-bar" id="migrationProgress" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <div id="migrationDone" class="hidden">
+        <div class="stats-bar" style="margin-bottom:16px;">
+          <div class="stat-chip">
+            <div class="stat-num" id="resSuccess" style="color: var(--success);">0</div>
+            <div class="stat-label">Succeeded</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resFailed" style="color: var(--error);">0</div>
+            <div class="stat-label">Failed</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resSkipped" style="color: var(--warn);">0</div>
+            <div class="stat-label">Skipped</div>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <div class="tab active" onclick="showResultTab('all', this)">All</div>
+          <div class="tab" onclick="showResultTab('success', this)">✅ Success</div>
+          <div class="tab" onclick="showResultTab('error', this)">❌ Failed</div>
+          <div class="tab" onclick="showResultTab('skipped', this)">⚠ Skipped</div>
+        </div>
+
+        <div id="resultRows"></div>
+
+        <div class="btn-row" style="margin-top: 24px;">
+          <button class="btn btn-secondary" onclick="location.reload()">↺ Start Over</button>
+          <button class="btn btn-primary" onclick="exportResults()">⬇ Export Results JSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- .app -->
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let state = {
+  srcUrl: '', srcToken: '', srcSkipTLS: false,
+  dstUrl: '', dstToken: '', dstSkipTLS: false,
+  discovery: null,
+  selected: new Set(),        // "category:id" keys
+  allResults: [],
+  activeFilter: 'ALL'
+};
+
+// ─── API helpers ─────────────────────────────────────────────────────────────
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+// ─── Step navigation ─────────────────────────────────────────────────────────
+function setStep(n) {
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById('step'+i);
+    el.classList.remove('active','done');
+    if (i < n) el.classList.add('done');
+    else if (i === n) el.classList.add('active');
+  }
+}
+
+function showView(id) {
+  ['view-connect','view-discovering','view-select','view-destination','view-results']
+    .forEach(v => document.getElementById(v).classList.add('hidden'));
+  document.getElementById(id).classList.remove('hidden');
+}
+
+// ─── Step 1: Test connection ──────────────────────────────────────────────────
+async function testConnection() {
+  const url = document.getElementById('srcUrl').value.trim();
+  const token = document.getElementById('srcToken').value.trim();
+  const skip = document.getElementById('srcSkipTLS').checked;
+  if (!url || !token) return alert('Please enter URL and token.');
+
+  setStatus('srcStatus', 'loading', '⏳ Testing connection...');
+
+  try {
+    const res = await api('/api/test-connection', 'POST', {url, token, skipTls: skip});
+    setStatus('srcStatus', 'ok', `✓ Connected as: ${res.user}`);
+    document.getElementById('btnDiscover').disabled = false;
+  } catch(e) {
+    setStatus('srcStatus', 'err', `✗ ${e.message}`);
+    document.getElementById('btnDiscover').disabled = true;
+  }
+}
+
+function setStatus(elId, type, msg) {
+  const el = document.getElementById(elId);
+  el.className = `conn-status ${type}`;
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="dot ${type==='loading'?'pulse':''}"></div><span>${msg}</span>`;
+}
+
+// ─── Step 2: Discovery ────────────────────────────────────────────────────────
+async function startDiscovery() {
+  const url = document.getElementById('srcUrl').value.trim();
+  const token = document.getElementById('srcToken').value.trim();
+  const skip = document.getElementById('srcSkipTLS').checked;
+  if (!url || !token) return alert('Please enter URL and token.');
+
+  state.srcUrl = url; state.srcToken = token; state.srcSkipTLS = skip;
+
+  setStep(2);
+  showView('view-discovering');
+
+  const msgs = [
+    'Connecting to appliance...',
+    'Discovering clouds & integrations...',
+    'Scanning instances & virtual images...',
+    'Loading library: instance types, layouts...',
+    'Fetching tasks, workflows & catalog items...',
+    'Enumerating tenants, roles & policies...',
+    'Checking credentials & storage...',
+    'Scanning networks & pools...',
+    'Almost done — collating results...'
+  ];
+
+  let mi = 0;
+  const msgEl = document.getElementById('discoveryMsg');
+  const logEl = document.getElementById('discoveryLog');
+  const progEl = document.getElementById('discoveryProgress');
+
+  const ticker = setInterval(() => {
+    if (mi < msgs.length) {
+      msgEl.textContent = msgs[mi];
+      logEl.innerHTML += `<div style="color:var(--text3);">[${new Date().toLocaleTimeString()}] ${msgs[mi]}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+      progEl.style.width = `${Math.min(95, (mi/msgs.length)*100)}%`;
+      mi++;
+    }
+  }, 900);
+
+  try {
+    const res = await api('/api/discover', 'POST', {url, token, skipTls: skip});
+    clearInterval(ticker);
+    progEl.style.width = '100%';
+    msgEl.textContent = `Discovery complete — ${res.total} items found across ${res.categories.length} categories`;
+    state.discovery = res;
+
+    setTimeout(() => {
+      setStep(3);
+      showView('view-select');
+      renderDiscovery();
+    }, 800);
+  } catch(e) {
+    clearInterval(ticker);
+    msgEl.textContent = `Error: ${e.message}`;
+    document.querySelector('#view-discovering .discovery-banner').style.borderColor = 'rgba(239,68,68,0.3)';
+    document.querySelector('#view-discovering .discovery-banner').style.color = 'var(--error)';
+    setTimeout(() => { setStep(1); showView('view-connect'); }, 3000);
+  }
+}
+
+// ─── Step 3: Render discovery ─────────────────────────────────────────────────
+const ICONS = {
+  cloud:'☁', integration:'🔌', network:'🌐', 'network pool':'🌐', 'network domain':'🌐',
+  instance:'💻', 'virtual image':'💿', 'instance type':'📦', layout:'📐', 'node type':'🧩',
+  'catalog item':'🛒', blueprint:'📋', app:'🖥', task:'⚙', workflow:'🔄',
+  tenant:'🏢', role:'🎭', user:'👤', policy:'🔒', group:'👥',
+  credential:'🔑', storage:'🗄', monitor:'📊', alert:'🔔', cluster:'🌀', cypher:'🔐'
+};
+
+function catIcon(name) {
+  const k = name.toLowerCase();
+  for (const [key, ico] of Object.entries(ICONS)) {
+    if (k.includes(key)) return ico;
+  }
+  return '📁';
+}
+
+function renderDiscovery() {
+  const d = state.discovery;
+  if (!d) return;
+
+  // Errors
+  if (d.errors && d.errors.length) {
+    const errDiv = document.getElementById('discoveryErrors');
+    errDiv.classList.remove('hidden');
+    errDiv.innerHTML = `<div class="error-list"><p style="color:var(--warn); font-weight:700; margin-bottom:6px;">⚠ ${d.errors.length} endpoints returned errors (permissions or not available):</p>${d.errors.map(e=>`<p>• ${e}</p>`).join('')}</div>`;
+  }
+
+  // Stats bar
+  const statsBar = document.getElementById('statsBar');
+  statsBar.innerHTML = `
+    <div class="stat-chip"><div class="stat-num">${d.total}</div><div class="stat-label">Total Items</div></div>
+    <div class="stat-chip"><div class="stat-num">${d.categories.length}</div><div class="stat-label">Categories</div></div>
+    <div class="stat-chip"><div class="stat-num" id="statSelected">0</div><div class="stat-label">Selected</div></div>
+  `;
+
+  // Category filter buttons
+  const filterDiv = document.getElementById('categoryFilters');
+  filterDiv.innerHTML = `<button class="filter-btn active" onclick="setCategoryFilter('ALL', this)">All</button>`;
+  d.categories.forEach(cat => {
+    filterDiv.innerHTML += `<button class="filter-btn" onclick="setCategoryFilter('${cat.name}', this)">${catIcon(cat.name)} ${cat.name} <span style="color:var(--text3)">(${cat.items.length})</span></button>`;
+  });
+
+  renderCategories();
+}
+
+function renderCategories() {
+  const d = state.discovery;
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const filter = state.activeFilter;
+  const container = document.getElementById('categoryList');
+  container.innerHTML = '';
+
+  let totalVisible = 0;
+
+  d.categories.forEach(cat => {
+    if (filter !== 'ALL' && cat.name !== filter) return;
+
+    const filtered = cat.items.filter(item =>
+      !search || item.name.toLowerCase().includes(search) || (item.subType||'').toLowerCase().includes(search)
+    );
+
+    if (!filtered.length) return;
+    totalVisible += filtered.length;
+
+    const selectedInCat = filtered.filter(i => state.selected.has(`${cat.name}:${i.id}`)).length;
+    const allSelected = selectedInCat === filtered.length;
+
+    const group = document.createElement('div');
+    group.className = 'category-group';
+    group.id = `cat-${cat.name.replace(/\s+/g,'_')}`;
+
+    const header = document.createElement('div');
+    header.className = 'category-header' + (selectedInCat > 0 ? ' has-selected' : '');
+    header.innerHTML = `
+      <input type="checkbox" class="cat-check" id="catck-${cat.name}" ${allSelected && filtered.length ? 'checked' : ''} ${filtered.length&&selectedInCat&&!allSelected?'indeterminate':''}
+        onclick="toggleCategory(event, '${cat.name}', ${JSON.stringify(filtered.map(i=>i.id)).replace(/"/g,"'")})">
+      <span class="cat-icon">${catIcon(cat.name)}</span>
+      <span class="cat-name">${cat.name}</span>
+      ${selectedInCat ? `<span class="cat-selected-count">${selectedInCat} selected</span>` : ''}
+      <span class="cat-count">${filtered.length} item${filtered.length!==1?'s':''}</span>
+      <span class="cat-chevron open">▶</span>
+    `;
+
+    // set indeterminate
+    if (selectedInCat > 0 && !allSelected) {
+      setTimeout(() => {
+        const ck = document.getElementById(`catck-${cat.name}`);
+        if (ck) ck.indeterminate = true;
+      }, 0);
+    }
+
+    const list = document.createElement('div');
+    list.className = 'item-list open';
+
+    filtered.forEach(item => {
+      const checked = state.selected.has(`${cat.name}:${item.id}`);
+      const row = document.createElement('div');
+      row.className = 'item-row';
+      row.innerHTML = `
+        <input type="checkbox" class="item-check" ${checked ? 'checked' : ''}
+          onchange="toggleItem('${cat.name}', ${item.id}, this.checked)">
+        <span class="item-name" title="${item.name}">${item.name || '<unnamed>'}</span>
+        ${item.subType ? `<span class="item-subtype">${item.subType}</span>` : ''}
+        <span class="item-id">#${item.id}</span>
+      `;
+      list.appendChild(row);
+    });
+
+    header.addEventListener('click', (e) => {
+      if (e.target.type === 'checkbox') return;
+      list.classList.toggle('open');
+      header.querySelector('.cat-chevron').classList.toggle('open');
+    });
+
+    group.appendChild(header);
+    group.appendChild(list);
+    container.appendChild(group);
+  });
+
+  document.getElementById('visibleCount').textContent = `${totalVisible} items visible`;
+  updateSelCount();
+}
+
+function setCategoryFilter(cat, btn) {
+  state.activeFilter = cat;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderCategories();
+}
+
+function filterItems() { renderCategories(); }
+
+function toggleItem(cat, id, checked) {
+  const key = `${cat}:${id}`;
+  if (checked) state.selected.add(key);
+  else state.selected.delete(key);
+  updateSelCount();
+  renderCategories();
+}
+
+function toggleCategory(e, catName, ids) {
+  const checked = e.target.checked;
+  ids.forEach(id => {
+    const key = `${catName}:${id}`;
+    if (checked) state.selected.add(key);
+    else state.selected.delete(key);
+  });
+  updateSelCount();
+  renderCategories();
+}
+
+function selectAll() {
+  const d = state.discovery;
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  d.categories.forEach(cat => {
+    if (state.activeFilter !== 'ALL' && cat.name !== state.activeFilter) return;
+    cat.items.filter(i => !search || i.name.toLowerCase().includes(search))
+      .forEach(i => state.selected.add(`${cat.name}:${i.id}`));
+  });
+  renderCategories();
+}
+
+function deselectAll() {
+  state.selected.clear();
+  renderCategories();
+}
+
+function updateSelCount() {
+  const n = state.selected.size;
+  document.getElementById('selCount').textContent = n;
+  document.getElementById('statSelected').textContent = n;
+  document.getElementById('btnNext').disabled = n === 0;
+}
+
+// ─── Step 4: Destination ──────────────────────────────────────────────────────
+function goToDestination() {
+  if (state.selected.size === 0) return;
+  setStep(4);
+  showView('view-destination');
+  renderPreview();
+}
+
+function goBack() {
+  setStep(3);
+  showView('view-select');
+}
+
+function renderPreview() {
+  const d = state.discovery;
+  const byCategory = {};
+  state.selected.forEach(key => {
+    const [cat, idStr] = key.split(':');
+    const id = parseInt(idStr);
+    const catData = d.categories.find(c => c.name === cat);
+    if (!catData) return;
+    const item = catData.items.find(i => i.id === id);
+    if (!item) return;
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(item);
+  });
+
+  let html = '';
+  Object.entries(byCategory).forEach(([cat, items]) => {
+    html += `<div style="margin-bottom:12px;">
+      <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:6px; padding: 0 4px; text-transform:uppercase; letter-spacing:0.5px;">${catIcon(cat)} ${cat} (${items.length})</div>
+      ${items.map(i => `<div style="padding:6px 12px; font-family:'JetBrains Mono',monospace; font-size:12px; border-left:2px solid var(--border2); margin:2px 0; color:var(--text);">${i.name}</div>`).join('')}
+    </div>`;
+  });
+
+  document.getElementById('previewList').innerHTML = html || '<div class="empty"><p>No items selected</p></div>';
+}
+
+async function testDestConnection() {
+  const url = document.getElementById('dstUrl').value.trim();
+  const token = document.getElementById('dstToken').value.trim();
+  const skip = document.getElementById('dstSkipTLS').checked;
+  if (!url || !token) return alert('Please enter destination URL and token.');
+
+  setStatus('dstStatus', 'loading', '⏳ Testing connection...');
+  try {
+    const res = await api('/api/test-connection', 'POST', {url, token, skipTls: skip});
+    setStatus('dstStatus', 'ok', `✓ Connected as: ${res.user}`);
+  } catch(e) {
+    setStatus('dstStatus', 'err', `✗ ${e.message}`);
+  }
+}
+
+// ─── Step 5: Migration ────────────────────────────────────────────────────────
+async function startMigration() {
+  const dstUrl = document.getElementById('dstUrl').value.trim();
+  const dstToken = document.getElementById('dstToken').value.trim();
+  const dstSkipTLS = document.getElementById('dstSkipTLS').checked;
+  if (!dstUrl || !dstToken) return alert('Please enter destination URL and token.');
+
+  // Build items list
+  const d = state.discovery;
+  const items = [];
+  state.selected.forEach(key => {
+    const [cat, idStr] = key.split(':');
+    const id = parseInt(idStr);
+    const catData = d.categories.find(c => c.name === cat);
+    if (!catData) return;
+    const item = catData.items.find(i => i.id === id);
+    if (!item) return;
+    items.push({
+      category: cat,
+      type: item.type,
+      id: item.id,
+      name: item.name,
+      rawJson: item.rawJson
+    });
+  });
+
+  setStep(5);
+  showView('view-results');
+  document.getElementById('migrationRunning').classList.remove('hidden');
+  document.getElementById('migrationDone').classList.add('hidden');
+
+  const total = items.length;
+  let done = 0;
+  document.getElementById('migrationMsg').textContent = `Migrating ${total} items...`;
+
+  try {
+    const res = await api('/api/migrate', 'POST', {
+      source: {url: state.srcUrl, token: state.srcToken, skipTls: state.srcSkipTLS},
+      destination: {url: dstUrl, token: dstToken, skipTls: dstSkipTLS},
+      items
+    });
+
+    state.allResults = res.results;
+    document.getElementById('migrationRunning').classList.add('hidden');
+    document.getElementById('migrationDone').classList.remove('hidden');
+
+    const skipped = res.results.filter(r => r.status === 'skipped').length;
+    document.getElementById('resSuccess').textContent = res.success;
+    document.getElementById('resFailed').textContent = res.failed;
+    document.getElementById('resSkipped').textContent = skipped;
+
+    renderResultRows('all');
+  } catch(e) {
+    document.getElementById('migrationMsg').textContent = `Error: ${e.message}`;
+  }
+}
+
+function renderResultRows(filter) {
+  const rows = filter === 'all' ? state.allResults : state.allResults.filter(r => r.status === filter);
+  const icons = {success: '✓', error: '✗', skipped: '~'};
+  document.getElementById('resultRows').innerHTML = rows.length === 0
+    ? '<div class="empty" style="padding:30px"><p>No items in this category</p></div>'
+    : rows.map(r => `
+      <div class="result-row">
+        <div class="result-icon ${r.status}">${icons[r.status]||'?'}</div>
+        <span class="result-name">${r.name}</span>
+        <span class="result-type">${r.type}</span>
+        ${r.message ? `<span class="result-msg">${r.message}</span>` : ''}
+      </div>`).join('');
+}
+
+function showResultTab(filter, tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  renderResultRows(filter);
+}
+
+function exportResults() {
+  const blob = new Blob([JSON.stringify({
+    timestamp: new Date().toISOString(),
+    source: state.srcUrl,
+    results: state.allResults
+  }, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `morpheus-migration-${Date.now()}.json`;
+  a.click();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build all platforms
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.VERSION }}"
+
+          GOOS=linux   GOARCH=amd64  go build -ldflags="$LDFLAGS" -o dist/morpheus-snapshot-linux-amd64          ./cmd/server
+          GOOS=linux   GOARCH=arm64  go build -ldflags="$LDFLAGS" -o dist/morpheus-snapshot-linux-arm64          ./cmd/server
+          GOOS=windows GOARCH=amd64  go build -ldflags="$LDFLAGS" -o dist/morpheus-snapshot-windows-amd64.exe    ./cmd/server
+          GOOS=darwin  GOARCH=amd64  go build -ldflags="$LDFLAGS" -o dist/morpheus-snapshot-mac-intel            ./cmd/server
+          GOOS=darwin  GOARCH=arm64  go build -ldflags="$LDFLAGS" -o dist/morpheus-snapshot-mac-apple-silicon    ./cmd/server
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt && cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Morpheus Snapshot ${{ github.ref_name }}"
+          body: |
+            ## Morpheus Snapshot ${{ github.ref_name }}
+
+            ### Download the right binary for your platform:
+            | Platform | File |
+            |----------|------|
+            | Linux x86_64 | `morpheus-snapshot-linux-amd64` |
+            | Linux ARM64 | `morpheus-snapshot-linux-arm64` |
+            | Windows x64 | `morpheus-snapshot-windows-amd64.exe` |
+            | macOS Intel | `morpheus-snapshot-mac-intel` |
+            | macOS Apple Silicon (M1/M2/M3/M4) | `morpheus-snapshot-mac-apple-silicon` |
+
+            ### Quick start (Linux):
+            ```bash
+            chmod +x morpheus-snapshot-linux-amd64
+            sudo ./morpheus-snapshot-linux-amd64
+            # open https://your-vm-ip
+            ```
+
+            ### macOS Gatekeeper fix:
+            ```bash
+            xattr -rd com.apple.quarantine morpheus-snapshot-mac-apple-silicon
+            chmod +x morpheus-snapshot-mac-apple-silicon
+            sudo ./morpheus-snapshot-mac-apple-silicon
+            ```
+          files: |
+            dist/morpheus-snapshot-linux-amd64
+            dist/morpheus-snapshot-linux-arm64
+            dist/morpheus-snapshot-windows-amd64.exe
+            dist/morpheus-snapshot-mac-intel
+            dist/morpheus-snapshot-mac-apple-silicon
+            dist/checksums.txt
+          draft: false
+          prerelease: false
