@@ -727,6 +727,70 @@
   .empty h3 { font-size: 16px; color: var(--text2); margin-bottom: 8px; }
   .empty p { font-size: 13px; font-family: 'JetBrains Mono', monospace; }
 
+
+  /* Saved profiles */
+  .profiles-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0 4px;
+    border-top: 1px solid var(--border);
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+
+  .profiles-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+
+  .profile-select {
+    flex: 1;
+    min-width: 160px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 7px 10px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .profile-select:focus { border-color: var(--accent); }
+  .profile-select option { background: var(--surface2); }
+
+  .btn-icon {
+    padding: 7px 10px;
+    font-size: 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1;
+  }
+
+  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-icon.del:hover { border-color: var(--error); color: var(--error); }
+
+  .save-name-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+  }
+
+  .save-name-row input {
+    flex: 1;
+  }
+
   /* Hide/Show utility */
   .hidden { display: none !important; }
 
@@ -804,6 +868,20 @@
       </div>
 
       <div id="srcStatus" class="hidden"></div>
+
+      <div class="profiles-row">
+        <span class="profiles-label">Saved:</span>
+        <select class="profile-select" id="srcProfileSelect" onchange="loadProfile('src', this.value)">
+          <option value="">— select a profile —</option>
+        </select>
+        <button class="btn-icon" title="Save current as profile" onclick="promptSaveProfile('src')">💾</button>
+        <button class="btn-icon del" title="Delete selected profile" onclick="deleteProfile('src')">🗑</button>
+      </div>
+      <div id="srcSaveRow" class="save-name-row hidden">
+        <input type="text" id="srcProfileName" placeholder="Profile name (e.g. Prod Appliance)" />
+        <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="saveProfile('src')">Save</button>
+        <button class="btn btn-secondary" style="padding:7px 14px; font-size:12px;" onclick="cancelSave('src')">Cancel</button>
+      </div>
 
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="testConnection()">🔌 Test Connection</button>
@@ -897,6 +975,20 @@
       </div>
 
       <div id="dstStatus" class="hidden"></div>
+
+      <div class="profiles-row">
+        <span class="profiles-label">Saved:</span>
+        <select class="profile-select" id="dstProfileSelect" onchange="loadProfile('dst', this.value)">
+          <option value="">— select a profile —</option>
+        </select>
+        <button class="btn-icon" title="Save current as profile" onclick="promptSaveProfile('dst')">💾</button>
+        <button class="btn-icon del" title="Delete selected profile" onclick="deleteProfile('dst')">🗑</button>
+      </div>
+      <div id="dstSaveRow" class="save-name-row hidden">
+        <input type="text" id="dstProfileName" placeholder="Profile name (e.g. Dev Appliance)" />
+        <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="saveProfile('dst')">Save</button>
+        <button class="btn btn-secondary" style="padding:7px 14px; font-size:12px;" onclick="cancelSave('dst')">Cancel</button>
+      </div>
 
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="testDestConnection()">🔌 Test Connection</button>
@@ -1401,6 +1493,101 @@ function exportResults() {
   a.download = `morpheus-migration-${Date.now()}.json`;
   a.click();
 }
+// ─── Profiles ─────────────────────────────────────────────────────────────────
+let profilesCache = [];
+
+async function loadProfilesList() {
+  try {
+    const res = await api('/api/profiles');
+    profilesCache = res.profiles || [];
+    refreshProfileDropdowns();
+  } catch(e) {
+    console.warn('Could not load profiles:', e.message);
+  }
+}
+
+function refreshProfileDropdowns() {
+  ['src', 'dst'].forEach(side => {
+    const sel = document.getElementById(side + 'ProfileSelect');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— select a profile —</option>';
+    profilesCache.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
+  });
+}
+
+function loadProfile(side, id) {
+  if (!id) return;
+  const p = profilesCache.find(p => p.id === id);
+  if (!p) return;
+  document.getElementById(side + 'Url').value = p.url;
+  document.getElementById(side + 'Token').value = p.token;
+  document.getElementById(side + 'SkipTLS').checked = p.skipTls;
+  if (side === 'src') {
+    document.getElementById('btnDiscover').disabled = false;
+  }
+}
+
+function promptSaveProfile(side) {
+  document.getElementById(side + 'SaveRow').classList.remove('hidden');
+  document.getElementById(side + 'ProfileName').focus();
+}
+
+function cancelSave(side) {
+  document.getElementById(side + 'SaveRow').classList.add('hidden');
+  document.getElementById(side + 'ProfileName').value = '';
+}
+
+async function saveProfile(side) {
+  const name = document.getElementById(side + 'ProfileName').value.trim();
+  const url  = document.getElementById(side + 'Url').value.trim();
+  const token = document.getElementById(side + 'Token').value.trim();
+  const skipTls = document.getElementById(side + 'SkipTLS').checked;
+
+  if (!name) { alert('Please enter a profile name.'); return; }
+  if (!url || !token) { alert('URL and token must be filled in before saving.'); return; }
+
+  // If the currently selected profile has the same name, update it (pass its id)
+  const sel = document.getElementById(side + 'ProfileSelect');
+  const existingId = sel.value || '';
+  const existing = profilesCache.find(p => p.id === existingId);
+  const id = (existing && existing.name === name) ? existingId : '';
+
+  try {
+    const saved = await api('/api/profiles/save', 'POST', {id, name, url, token, skipTls});
+    cancelSave(side);
+    await loadProfilesList();
+    // Select the just-saved profile
+    document.getElementById(side + 'ProfileSelect').value = saved.id;
+  } catch(e) {
+    alert('Failed to save profile: ' + e.message);
+  }
+}
+
+async function deleteProfile(side) {
+  const sel = document.getElementById(side + 'ProfileSelect');
+  const id = sel.value;
+  if (!id) { alert('Select a profile to delete first.'); return; }
+  const p = profilesCache.find(p => p.id === id);
+  if (!confirm(`Delete profile "${p ? p.name : id}"?`)) return;
+  try {
+    await api('/api/profiles/delete?id=' + encodeURIComponent(id), 'DELETE');
+    sel.value = '';
+    await loadProfilesList();
+  } catch(e) {
+    alert('Failed to delete profile: ' + e.message);
+  }
+}
+
+// Load profiles on page load
+loadProfilesList();
+
 </script>
 </body>
 </html>
