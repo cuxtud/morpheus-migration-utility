@@ -25,11 +25,49 @@ import (
 var staticFiles embed.FS
 
 const (
-	defaultPort = "443"
-	certFile    = "cert.pem"
-	keyFile     = "key.pem"
-	version     = "1.0.0"
+	defaultPort  = "443"
+	certFile     = "cert.pem"
+	keyFile      = "key.pem"
+	profilesFile = "connections.json"
+	version      = "1.0.0"
 )
+
+// ─── Connection Profiles ──────────────────────────────────────────────────────
+
+type Profile struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Token   string `json:"token"`
+	SkipTLS bool   `json:"skipTls"`
+}
+
+type ProfileStore struct {
+	Profiles []Profile `json:"profiles"`
+}
+
+func loadProfiles() (*ProfileStore, error) {
+	data, err := os.ReadFile(profilesFile)
+	if os.IsNotExist(err) {
+		return &ProfileStore{Profiles: []Profile{}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var store ProfileStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		return nil, err
+	}
+	return &store, nil
+}
+
+func saveProfiles(store *ProfileStore) error {
+	data, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(profilesFile, data, 0600)
+}
 
 func main() {
 	port := os.Getenv("PORT")
@@ -48,6 +86,9 @@ func main() {
 	mux.HandleFunc("/api/test-connection", handleTestConnection)
 	mux.HandleFunc("/api/discover", handleDiscover)
 	mux.HandleFunc("/api/migrate", handleMigrate)
+	mux.HandleFunc("/api/profiles", handleListProfiles)
+	mux.HandleFunc("/api/profiles/save", handleSaveProfile)
+	mux.HandleFunc("/api/profiles/delete", handleDeleteProfile)
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"version": version})
 	})
@@ -222,4 +263,90 @@ func ensureCert(certPath, keyPath string) error {
 
 	log.Printf("Self-signed cert generated: %s / %s (valid 10 years)", certPath, keyPath)
 	return nil
+}
+
+// ─── Profile Handlers ─────────────────────────────────────────────────────────
+
+func handleListProfiles(w http.ResponseWriter, r *http.Request) {
+	store, err := loadProfiles()
+	if err != nil {
+		jsonError(w, "failed to load profiles: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, store)
+}
+
+func handleSaveProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p Profile
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if p.Name == "" || p.URL == "" || p.Token == "" {
+		jsonError(w, "name, url and token are required", http.StatusBadRequest)
+		return
+	}
+
+	store, err := loadProfiles()
+	if err != nil {
+		jsonError(w, "failed to load profiles", http.StatusInternalServerError)
+		return
+	}
+
+	if p.ID == "" {
+		p.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	found := false
+	for i, existing := range store.Profiles {
+		if existing.ID == p.ID {
+			store.Profiles[i] = p
+			found = true
+			break
+		}
+	}
+	if !found {
+		store.Profiles = append(store.Profiles, p)
+	}
+
+	if err := saveProfiles(store); err != nil {
+		jsonError(w, "failed to save profiles", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, p)
+}
+
+func handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		jsonError(w, "id is required", http.StatusBadRequest)
+		return
+	}
+
+	store, err := loadProfiles()
+	if err != nil {
+		jsonError(w, "failed to load profiles", http.StatusInternalServerError)
+		return
+	}
+
+	filtered := store.Profiles[:0]
+	for _, p := range store.Profiles {
+		if p.ID != id {
+			filtered = append(filtered, p)
+		}
+	}
+	store.Profiles = filtered
+
+	if err := saveProfiles(store); err != nil {
+		jsonError(w, "failed to save profiles", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"status": "deleted"})
 }
