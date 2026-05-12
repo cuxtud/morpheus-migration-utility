@@ -1,4 +1,4 @@
-# Morpheus Migration Utility 🔄
+# Morpheus Snapshot Utility 🔄
 
 A self-contained migration tool for HPE Morpheus — discovers all resources on a source appliance, lets you cherry-pick what to migrate, then copies selected items to a destination appliance.
 
