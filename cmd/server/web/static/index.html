@@ -109,6 +109,25 @@
     border-radius: 20px;
   }
 
+  .app-footer {
+    position: fixed;
+    z-index: 20;
+    bottom: 0;
+    right: 0;
+    padding: 10px 20px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text3);
+    letter-spacing: 0.04em;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .app-footer .app-version {
+    color: var(--text2);
+  }
+
   /* Steps */
   .steps {
     display: flex;
@@ -368,8 +387,15 @@
   /* Stats bar */
   .stats-bar {
     display: flex;
+    flex-wrap: wrap;
     gap: 2px;
     margin-bottom: 24px;
+  }
+
+  .stats-bar.migration-stats .stat-chip {
+    flex: 1 1 82px;
+    min-width: 78px;
+    max-width: 120px;
   }
 
   .stat-chip {
@@ -467,6 +493,17 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
+  }
+
+  .category-parent-header {
+    margin: 16px 0 8px;
+    padding: 4px 8px;
+    border-left: 3px solid var(--accent2);
+    color: var(--text2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .category-header {
@@ -641,9 +678,24 @@
   .result-icon.success { background: rgba(34, 197, 94, 0.15); color: var(--success); }
   .result-icon.error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
   .result-icon.skipped { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
+  .result-icon.blocked { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+  .result-icon.partial { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
 
   .result-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .result-type { color: var(--text3); }
+
+  .result-outcome {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .result-outcome.updated { color: #a5b4fc; border-color: rgba(129, 140, 232, 0.35); }
+  .result-outcome.created { color: #7dd3fc; border-color: rgba(56, 189, 248, 0.35); }
   .result-msg { color: var(--text2); font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
 
   /* Progress bar */
@@ -819,7 +871,6 @@
         <div class="logo-sub">Appliance Migration Tool</div>
       </div>
     </div>
-    <div class="badge" id="appVersion">v1.0.0</div>
   </header>
 
   <!-- Steps -->
@@ -889,6 +940,13 @@
           🔍 Connect & Discover
         </button>
       </div>
+
+      <div id="sessionRestoreBanner" class="alert warn hidden" style="margin-top:16px;flex-wrap:wrap;">
+        <span>💾</span>
+        <span style="flex:1">A discovery session was saved in this browser tab. You can restore it without calling the API again.</span>
+        <button type="button" class="btn btn-primary" style="margin-left:8px;" onclick="restoreDiscoverySession()">Restore</button>
+        <button type="button" class="btn btn-secondary" onclick="clearDiscoverySession()">Discard</button>
+      </div>
     </div>
 
     <div class="alert info">
@@ -914,6 +972,25 @@
   <!-- VIEW 3: Select items -->
   <div id="view-select" class="hidden">
     <div id="discoveryErrors" class="hidden"></div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-title" style="font-size:14px;">Discovery backup</div>
+      <p style="font-size:12px;color:var(--text3);margin:0 0 12px;line-height:1.5;">
+        Keep a copy in <strong>this tab</strong> (session storage, includes your token until the tab closes) or on <strong>disk</strong> (JSON file; token is not written to the file). “Save to folder” uses the browser folder picker (Chromium / Chrome / Edge over HTTPS) and creates the subfolder you name if it does not exist.
+      </p>
+      <label class="checkbox-label" style="display:block;margin-bottom:12px;">
+        <input type="checkbox" id="persistDiscoverySession" onchange="onPersistDiscoveryToggle()" />
+        Remember discovery, source URL, token, and checkbox selections in this browser tab
+      </label>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <label style="font-size:12px;color:var(--text2);">Subfolder to create inside the folder you pick:</label>
+        <input type="text" id="discoveryFolderName" value="morpheus-snapshot-discovery" style="max-width:240px;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);" />
+        <button type="button" class="btn btn-secondary" onclick="discoverySaveToFolder()">📁 Save to folder…</button>
+        <button type="button" class="btn btn-secondary" onclick="discoveryDownloadJSON()">⬇ Download JSON</button>
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('discoveryFileInput').click()">📂 Load from file…</button>
+        <input type="file" id="discoveryFileInput" accept=".json,application/json" style="display:none" onchange="discoveryLoadFromFile(event)" />
+      </div>
+    </div>
 
     <!-- Stats -->
     <div class="stats-bar" id="statsBar"></div>
@@ -972,6 +1049,12 @@
             Skip TLS Verification
           </label>
         </div>
+        <div class="form-group full">
+          <label class="checkbox-label">
+            <input type="checkbox" id="httpDebug" />
+            Log outgoing HTTP to snapshot server (stderr) — use when debugging migration API calls
+          </label>
+        </div>
       </div>
 
       <div id="dstStatus" class="hidden"></div>
@@ -1020,10 +1103,18 @@
       </div>
 
       <div id="migrationDone" class="hidden">
-        <div class="stats-bar" style="margin-bottom:16px;">
+        <div class="stats-bar migration-stats" style="margin-bottom:16px;">
           <div class="stat-chip">
             <div class="stat-num" id="resSuccess" style="color: var(--success);">0</div>
             <div class="stat-label">Succeeded</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resCreated" style="color:#38bdf8;">0</div>
+            <div class="stat-label">Created</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resUpdated" style="color:#818cf8;">0</div>
+            <div class="stat-label">Updated</div>
           </div>
           <div class="stat-chip">
             <div class="stat-num" id="resFailed" style="color: var(--error);">0</div>
@@ -1033,18 +1124,29 @@
             <div class="stat-num" id="resSkipped" style="color: var(--warn);">0</div>
             <div class="stat-label">Skipped</div>
           </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resBlocked" style="color: #a855f7;">0</div>
+            <div class="stat-label">Blocked</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resPartial" style="color: #fb923c;">0</div>
+            <div class="stat-label">Partial</div>
+          </div>
         </div>
 
         <div class="tabs">
           <div class="tab active" onclick="showResultTab('all', this)">All</div>
           <div class="tab" onclick="showResultTab('success', this)">✅ Success</div>
           <div class="tab" onclick="showResultTab('error', this)">❌ Failed</div>
+          <div class="tab" onclick="showResultTab('blocked', this)">⏸ Blocked</div>
+          <div class="tab" onclick="showResultTab('partial', this)">◐ Partial</div>
           <div class="tab" onclick="showResultTab('skipped', this)">⚠ Skipped</div>
         </div>
 
         <div id="resultRows"></div>
 
         <div class="btn-row" style="margin-top: 24px;">
+          <button class="btn btn-secondary" onclick="backToDiscoveredResources()">← Back to discovered resources</button>
           <button class="btn btn-secondary" onclick="location.reload()">↺ Start Over</button>
           <button class="btn btn-primary" onclick="exportResults()">⬇ Export Results JSON</button>
         </div>
@@ -1053,6 +1155,10 @@
   </div>
 
 </div><!-- .app -->
+
+<footer class="app-footer" role="contentinfo" aria-label="Application version">
+  <span id="appVersion" class="app-version">v…</span>
+</footer>
 
 <script>
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -1162,6 +1268,7 @@ async function startDiscovery() {
     progEl.style.width = '100%';
     msgEl.textContent = `Discovery complete — ${res.total} items found across ${res.categories.length} categories`;
     state.discovery = res;
+    maybePersistSession();
 
     setTimeout(() => {
       setStep(3);
@@ -1182,6 +1289,7 @@ const ICONS = {
   cloud:'☁', integration:'🔌', network:'🌐', 'network pool':'🌐', 'network domain':'🌐',
   instance:'💻', 'virtual image':'💿', 'instance type':'📦', layout:'📐', 'node type':'🧩',
   'catalog item':'🛒', blueprint:'📋', app:'🖥', task:'⚙', workflow:'🔄',
+  library:'📚', automation:'⚙', options:'🧰', input:'⌨', 'option list':'📋', form:'📝',
   tenant:'🏢', role:'🎭', user:'👤', policy:'🔒', group:'👥',
   credential:'🔑', storage:'🗄', monitor:'📊', alert:'🔔', cluster:'🌀', cypher:'🔐'
 };
@@ -1192,6 +1300,16 @@ function catIcon(name) {
     if (k.includes(key)) return ico;
   }
   return '📁';
+}
+
+function parentPathLabel(cat) {
+  return (cat.parentPath || '').trim();
+}
+
+function categoryDisplayLabel(cat) {
+  const parent = parentPathLabel(cat);
+  if (!parent) return cat.name;
+  return `${parent} / ${cat.name}`;
 }
 
 function renderDiscovery() {
@@ -1217,7 +1335,7 @@ function renderDiscovery() {
   const filterDiv = document.getElementById('categoryFilters');
   filterDiv.innerHTML = `<button class="filter-btn active" onclick="setCategoryFilter('ALL', this)">All</button>`;
   d.categories.forEach(cat => {
-    filterDiv.innerHTML += `<button class="filter-btn" onclick="setCategoryFilter('${cat.name}', this)">${catIcon(cat.name)} ${cat.name} <span style="color:var(--text3)">(${cat.items.length})</span></button>`;
+    filterDiv.innerHTML += `<button class="filter-btn" onclick="setCategoryFilter('${cat.name}', this)">${catIcon(cat.name)} ${categoryDisplayLabel(cat)} <span style="color:var(--text3)">(${cat.items.length})</span></button>`;
   });
 
   renderCategories();
@@ -1231,70 +1349,80 @@ function renderCategories() {
   container.innerHTML = '';
 
   let totalVisible = 0;
-
+  const visibleByParent = {};
   d.categories.forEach(cat => {
     if (filter !== 'ALL' && cat.name !== filter) return;
-
     const filtered = cat.items.filter(item =>
       !search || item.name.toLowerCase().includes(search) || (item.subType||'').toLowerCase().includes(search)
     );
-
     if (!filtered.length) return;
-    totalVisible += filtered.length;
+    const parent = parentPathLabel(cat) || 'Other';
+    if (!visibleByParent[parent]) visibleByParent[parent] = [];
+    visibleByParent[parent].push({cat, filtered});
+  });
 
-    const selectedInCat = filtered.filter(i => state.selected.has(`${cat.name}:${i.id}`)).length;
-    const allSelected = selectedInCat === filtered.length;
+  Object.keys(visibleByParent).sort().forEach(parent => {
+    const parentHeader = document.createElement('div');
+    parentHeader.className = 'category-parent-header';
+    parentHeader.textContent = `${catIcon(parent)} ${parent}`;
+    container.appendChild(parentHeader);
 
-    const group = document.createElement('div');
-    group.className = 'category-group';
-    group.id = `cat-${cat.name.replace(/\s+/g,'_')}`;
+    visibleByParent[parent].forEach(({cat, filtered}) => {
+      totalVisible += filtered.length;
 
-    const header = document.createElement('div');
-    header.className = 'category-header' + (selectedInCat > 0 ? ' has-selected' : '');
-    header.innerHTML = `
-      <input type="checkbox" class="cat-check" id="catck-${cat.name}" ${allSelected && filtered.length ? 'checked' : ''} ${filtered.length&&selectedInCat&&!allSelected?'indeterminate':''}
-        onclick="toggleCategory(event, '${cat.name}', ${JSON.stringify(filtered.map(i=>i.id)).replace(/"/g,"'")})">
-      <span class="cat-icon">${catIcon(cat.name)}</span>
-      <span class="cat-name">${cat.name}</span>
-      ${selectedInCat ? `<span class="cat-selected-count">${selectedInCat} selected</span>` : ''}
-      <span class="cat-count">${filtered.length} item${filtered.length!==1?'s':''}</span>
-      <span class="cat-chevron open">▶</span>
-    `;
+      const selectedInCat = filtered.filter(i => state.selected.has(`${cat.name}:${i.id}`)).length;
+      const allSelected = selectedInCat === filtered.length;
 
-    // set indeterminate
-    if (selectedInCat > 0 && !allSelected) {
-      setTimeout(() => {
-        const ck = document.getElementById(`catck-${cat.name}`);
-        if (ck) ck.indeterminate = true;
-      }, 0);
-    }
+      const group = document.createElement('div');
+      group.className = 'category-group';
+      group.id = `cat-${cat.name.replace(/\s+/g,'_')}`;
 
-    const list = document.createElement('div');
-    list.className = 'item-list open';
-
-    filtered.forEach(item => {
-      const checked = state.selected.has(`${cat.name}:${item.id}`);
-      const row = document.createElement('div');
-      row.className = 'item-row';
-      row.innerHTML = `
-        <input type="checkbox" class="item-check" ${checked ? 'checked' : ''}
-          onchange="toggleItem('${cat.name}', ${item.id}, this.checked)">
-        <span class="item-name" title="${item.name}">${item.name || '<unnamed>'}</span>
-        ${item.subType ? `<span class="item-subtype">${item.subType}</span>` : ''}
-        <span class="item-id">#${item.id}</span>
+      const header = document.createElement('div');
+      header.className = 'category-header' + (selectedInCat > 0 ? ' has-selected' : '');
+      header.innerHTML = `
+        <input type="checkbox" class="cat-check" id="catck-${cat.name}" ${allSelected && filtered.length ? 'checked' : ''} ${filtered.length&&selectedInCat&&!allSelected?'indeterminate':''}
+          onclick="toggleCategory(event, '${cat.name}', ${JSON.stringify(filtered.map(i=>i.id)).replace(/"/g,"'")})">
+        <span class="cat-icon">${catIcon(cat.name)}</span>
+        <span class="cat-name">${cat.name}</span>
+        ${selectedInCat ? `<span class="cat-selected-count">${selectedInCat} selected</span>` : ''}
+        <span class="cat-count">${filtered.length} item${filtered.length!==1?'s':''}</span>
+        <span class="cat-chevron open">▶</span>
       `;
-      list.appendChild(row);
-    });
 
-    header.addEventListener('click', (e) => {
-      if (e.target.type === 'checkbox') return;
-      list.classList.toggle('open');
-      header.querySelector('.cat-chevron').classList.toggle('open');
-    });
+      if (selectedInCat > 0 && !allSelected) {
+        setTimeout(() => {
+          const ck = document.getElementById(`catck-${cat.name}`);
+          if (ck) ck.indeterminate = true;
+        }, 0);
+      }
 
-    group.appendChild(header);
-    group.appendChild(list);
-    container.appendChild(group);
+      const list = document.createElement('div');
+      list.className = 'item-list open';
+
+      filtered.forEach(item => {
+        const checked = state.selected.has(`${cat.name}:${item.id}`);
+        const row = document.createElement('div');
+        row.className = 'item-row';
+        row.innerHTML = `
+          <input type="checkbox" class="item-check" ${checked ? 'checked' : ''}
+            onchange="toggleItem('${cat.name}', ${item.id}, this.checked)">
+          <span class="item-name" title="${item.name}">${item.name || '<unnamed>'}</span>
+          ${item.subType ? `<span class="item-subtype">${item.subType}</span>` : ''}
+          <span class="item-id">#${item.id}</span>
+        `;
+        list.appendChild(row);
+      });
+
+      header.addEventListener('click', (e) => {
+        if (e.target.type === 'checkbox') return;
+        list.classList.toggle('open');
+        header.querySelector('.cat-chevron').classList.toggle('open');
+      });
+
+      group.appendChild(header);
+      group.appendChild(list);
+      container.appendChild(group);
+    });
   });
 
   document.getElementById('visibleCount').textContent = `${totalVisible} items visible`;
@@ -1316,6 +1444,7 @@ function toggleItem(cat, id, checked) {
   else state.selected.delete(key);
   updateSelCount();
   renderCategories();
+  maybePersistSession();
 }
 
 function toggleCategory(e, catName, ids) {
@@ -1327,6 +1456,7 @@ function toggleCategory(e, catName, ids) {
   });
   updateSelCount();
   renderCategories();
+  maybePersistSession();
 }
 
 function selectAll() {
@@ -1338,11 +1468,13 @@ function selectAll() {
       .forEach(i => state.selected.add(`${cat.name}:${i.id}`));
   });
   renderCategories();
+  maybePersistSession();
 }
 
 function deselectAll() {
   state.selected.clear();
   renderCategories();
+  maybePersistSession();
 }
 
 function updateSelCount() {
@@ -1444,7 +1576,8 @@ async function startMigration() {
     const res = await api('/api/migrate', 'POST', {
       source: {url: state.srcUrl, token: state.srcToken, skipTls: state.srcSkipTLS},
       destination: {url: dstUrl, token: dstToken, skipTls: dstSkipTLS},
-      items
+      items,
+      httpDebug: document.getElementById('httpDebug').checked
     });
 
     state.allResults = res.results;
@@ -1455,6 +1588,10 @@ async function startMigration() {
     document.getElementById('resSuccess').textContent = res.success;
     document.getElementById('resFailed').textContent = res.failed;
     document.getElementById('resSkipped').textContent = skipped;
+    document.getElementById('resBlocked').textContent = res.blocked != null ? res.blocked : 0;
+    document.getElementById('resPartial').textContent = res.partial != null ? res.partial : 0;
+    document.getElementById('resCreated').textContent = res.created != null ? res.created : 0;
+    document.getElementById('resUpdated').textContent = res.updated != null ? res.updated : 0;
 
     renderResultRows('all');
   } catch(e) {
@@ -1464,7 +1601,7 @@ async function startMigration() {
 
 function renderResultRows(filter) {
   const rows = filter === 'all' ? state.allResults : state.allResults.filter(r => r.status === filter);
-  const icons = {success: '✓', error: '✗', skipped: '~'};
+  const icons = {success: '✓', error: '✗', skipped: '~', blocked: '!', partial: '◐'};
   document.getElementById('resultRows').innerHTML = rows.length === 0
     ? '<div class="empty" style="padding:30px"><p>No items in this category</p></div>'
     : rows.map(r => `
@@ -1472,6 +1609,7 @@ function renderResultRows(filter) {
         <div class="result-icon ${r.status}">${icons[r.status]||'?'}</div>
         <span class="result-name">${r.name}</span>
         <span class="result-type">${r.type}</span>
+        ${r.outcome ? `<span class="result-outcome ${r.outcome}">${r.outcome}</span>` : ''}
         ${r.message ? `<span class="result-msg">${r.message}</span>` : ''}
       </div>`).join('');
 }
@@ -1480,6 +1618,16 @@ function showResultTab(filter, tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   tab.classList.add('active');
   renderResultRows(filter);
+}
+
+function backToDiscoveredResources() {
+  if (!state.discovery || !state.discovery.categories) {
+    alert('Discovery is not available in memory. Use Start Over to connect and discover again.');
+    return;
+  }
+  setStep(3);
+  showView('view-select');
+  renderDiscovery();
 }
 
 function exportResults() {
@@ -1493,6 +1641,173 @@ function exportResults() {
   a.download = `morpheus-migration-${Date.now()}.json`;
   a.click();
 }
+
+// ─── Discovery session & disk backup ─────────────────────────────────────────
+const SESSION_KEY = 'morpheus_snapshot_session_v1';
+
+function buildDiscoveryExportObject() {
+  return {
+    exportVersion: 1,
+    exportedAt: new Date().toISOString(),
+    sourceUrl: state.srcUrl,
+    sourceSkipTLS: state.srcSkipTLS,
+    selectedKeys: [...state.selected],
+    discovery: state.discovery
+  };
+}
+
+function persistSessionToStorage() {
+  const cb = document.getElementById('persistDiscoverySession');
+  if (!cb || !cb.checked || !state.discovery) return;
+  const payload = {
+    v: 1,
+    discovery: state.discovery,
+    srcUrl: state.srcUrl,
+    srcToken: state.srcToken,
+    srcSkipTLS: state.srcSkipTLS,
+    selected: [...state.selected]
+  };
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('sessionStorage save failed', e);
+  }
+}
+
+function maybePersistSession() {
+  const cb = document.getElementById('persistDiscoverySession');
+  if (cb && cb.checked) persistSessionToStorage();
+}
+
+function onPersistDiscoveryToggle() {
+  const cb = document.getElementById('persistDiscoverySession');
+  if (!cb.checked) {
+    sessionStorage.removeItem(SESSION_KEY);
+    updateSessionRestoreBanner();
+    return;
+  }
+  persistSessionToStorage();
+}
+
+function updateSessionRestoreBanner() {
+  const el = document.getElementById('sessionRestoreBanner');
+  if (!el) return;
+  if (sessionStorage.getItem(SESSION_KEY)) el.classList.remove('hidden');
+  else el.classList.add('hidden');
+}
+
+function clearDiscoverySession() {
+  sessionStorage.removeItem(SESSION_KEY);
+  const cb = document.getElementById('persistDiscoverySession');
+  if (cb) cb.checked = false;
+  updateSessionRestoreBanner();
+}
+
+function restoreDiscoverySession() {
+  const raw = sessionStorage.getItem(SESSION_KEY);
+  if (!raw) return alert('No saved session in this tab.');
+  let data;
+  try { data = JSON.parse(raw); } catch (e) { return alert('Invalid saved session data.'); }
+  if (!data.discovery || !data.discovery.categories) return alert('Invalid discovery in saved session.');
+  state.discovery = data.discovery;
+  state.srcUrl = data.srcUrl || '';
+  state.srcToken = data.srcToken || '';
+  state.srcSkipTLS = !!data.srcSkipTLS;
+  state.selected = new Set(Array.isArray(data.selected) ? data.selected : []);
+  document.getElementById('srcUrl').value = state.srcUrl;
+  document.getElementById('srcToken').value = state.srcToken;
+  document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
+  const cb = document.getElementById('persistDiscoverySession');
+  if (cb) cb.checked = true;
+  document.getElementById('btnDiscover').disabled = false;
+  setStep(3);
+  showView('view-select');
+  renderDiscovery();
+  updateSessionRestoreBanner();
+}
+
+function discoveryDownloadJSON() {
+  if (!state.discovery) return alert('Run discovery first.');
+  const blob = new Blob([JSON.stringify(buildDiscoveryExportObject(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `morpheus-discovery-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function discoverySaveToFolder() {
+  if (!state.discovery) return alert('Run discovery first.');
+  const name = (document.getElementById('discoveryFolderName').value || 'morpheus-snapshot-discovery').trim()
+    .replace(/[^\w.\-]/g, '_') || 'morpheus-snapshot-discovery';
+  const json = JSON.stringify(buildDiscoveryExportObject(), null, 2);
+  if (!window.showDirectoryPicker) {
+    if (!confirm('This browser does not support choosing a folder. Download a JSON file instead?')) return;
+    discoveryDownloadJSON();
+    return;
+  }
+  try {
+    const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+    const sub = await dir.getDirectoryHandle(name, { create: true });
+    const fh = await sub.getFileHandle('discovery.json', { create: true });
+    const w = await fh.createWritable();
+    await w.write(new TextEncoder().encode(json));
+    await w.close();
+    alert('Saved: ' + name + '/discovery.json');
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    alert('Could not save to folder: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+function discoveryLoadFromFile(ev) {
+  const f = ev.target.files && ev.target.files[0];
+  if (ev.target) ev.target.value = '';
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const o = JSON.parse(reader.result);
+      const disc = o.discovery;
+      if (!disc || !disc.categories) throw new Error('File must contain a "discovery" object from this tool.');
+      state.discovery = disc;
+      state.srcUrl = o.sourceUrl || document.getElementById('srcUrl').value || '';
+      state.srcSkipTLS = !!o.sourceSkipTLS;
+      if (Array.isArray(o.selectedKeys)) state.selected = new Set(o.selectedKeys);
+      document.getElementById('srcUrl').value = state.srcUrl;
+      document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
+      document.getElementById('btnDiscover').disabled = false;
+      setStep(3);
+      showView('view-select');
+      renderDiscovery();
+      alert('Discovery loaded from file. Enter your API token on the source step if this export did not include one.');
+    } catch (err) {
+      alert('Could not load file: ' + err.message);
+    }
+  };
+  reader.readAsText(f);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  updateSessionRestoreBanner();
+  loadAppVersion();
+});
+
+async function loadAppVersion() {
+  const el = document.getElementById('appVersion');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/version');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d || d.version == null || String(d.version).trim() === '') return;
+    const v = String(d.version).trim();
+    el.textContent = v.startsWith('v') ? v : 'v' + v;
+  } catch (_) {
+    /* leave placeholder */
+  }
+}
+
 // ─── Profiles ─────────────────────────────────────────────────────────────────
 let profilesCache = [];
 
