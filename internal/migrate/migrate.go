@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/anish/morpheus-snapshot/internal/morpheus"
+	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 type MigrateRequest struct {

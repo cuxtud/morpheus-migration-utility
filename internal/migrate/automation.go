@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anish/morpheus-snapshot/internal/morpheus"
+	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 // automationState tracks destination IDs discovered during a migration run.

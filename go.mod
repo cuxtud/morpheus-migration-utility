@@ -1,3 +1,3 @@
-module github.com/anish/morpheus-snapshot
+module github.com/cuxtud/morpheus-migration-utility
 
-go 1.22.2
+go 1.22

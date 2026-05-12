@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anish/morpheus-snapshot/internal/migrate"
-	"github.com/anish/morpheus-snapshot/internal/morpheus"
+	"github.com/cuxtud/morpheus-migration-utility/internal/migrate"
+	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 //go:embed web/static/*

@@ -136,7 +136,7 @@ Export the full results as JSON for audit/documentation purposes.
 ## Building from Source
 
 ```bash
-git clone https://github.com/anish/morpheus-snapshot
+git clone https://github.com/cuxtud/morpheus-migration-utility
 cd morpheus-snapshot
 go mod tidy
 
