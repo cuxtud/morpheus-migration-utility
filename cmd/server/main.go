@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/anish/morpheus-snapshot/internal/migrate"
@@ -24,12 +25,28 @@ import (
 //go:embed web/static/*
 var staticFiles embed.FS
 
+// Version is embedded from VERSION in this directory; keep it in sync with the repository root VERSION
+// (run from repo root: go generate ./cmd/server).
+//
+//go:generate cp ../../VERSION VERSION
+//go:embed VERSION
+var versionFile string
+
+// version is read from the VERSION file next to this package (kept in sync with repository root VERSION).
+var version string
+
+func init() {
+	version = strings.TrimSpace(versionFile)
+	if version == "" {
+		version = "0.0.0-dev"
+	}
+}
+
 const (
 	defaultPort  = "443"
 	certFile     = "cert.pem"
 	keyFile      = "key.pem"
 	profilesFile = "connections.json"
-	version      = "1.0.0"
 )
 
 // ─── Connection Profiles ──────────────────────────────────────────────────────

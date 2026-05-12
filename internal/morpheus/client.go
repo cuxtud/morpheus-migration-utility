@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -14,6 +17,37 @@ type Client struct {
 	BaseURL    string
 	Token      string
 	httpClient *http.Client
+	// HTTPDebug logs outgoing requests when true. Also enabled by env MORPHEUS_SNAPSHOT_HTTP_DEBUG=1
+	// on the process running this client (e.g. the snapshot server).
+	HTTPDebug bool
+}
+
+func httpDebugEnvEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("MORPHEUS_SNAPSHOT_HTTP_DEBUG")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func (c *Client) httpDebugEnabled() bool {
+	return c != nil && (c.HTTPDebug || httpDebugEnvEnabled())
+}
+
+// logHTTPDebug writes method, full URL, and body to stderr and the standard log (server terminal).
+func (c *Client) logHTTPDebug(method, path string, payload []byte) {
+	if !c.httpDebugEnabled() {
+		return
+	}
+	u := strings.TrimRight(c.BaseURL, "/") + path
+	body := "(no body)"
+	if len(payload) > 0 {
+		body = string(payload)
+		const max = 256 * 1024
+		if len(body) > max {
+			body = body[:max] + fmt.Sprintf("\n... [truncated, %d bytes total]", len(payload))
+		}
+	}
+	msg := fmt.Sprintf("[morpheus-snapshot http debug] %s %s\n%s\n", method, u, body)
+	log.Print(msg)
+	fmt.Fprint(os.Stderr, msg)
 }
 
 func NewClient(baseURL, token string, skipTLS bool) *Client {
@@ -31,6 +65,7 @@ func NewClient(baseURL, token string, skipTLS bool) *Client {
 }
 
 func (c *Client) get(path string) ([]byte, error) {
+	c.logHTTPDebug(http.MethodGet, path, nil)
 	req, err := http.NewRequest("GET", c.BaseURL+path, nil)
 	if err != nil {
 		return nil, err
@@ -55,6 +90,7 @@ func (c *Client) get(path string) ([]byte, error) {
 }
 
 func (c *Client) post(path string, payload []byte) ([]byte, error) {
+	c.logHTTPDebug(http.MethodPost, path, payload)
 	req, err := http.NewRequest("POST", c.BaseURL+path, strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, err
@@ -78,6 +114,64 @@ func (c *Client) post(path string, payload []byte) ([]byte, error) {
 	return body, nil
 }
 
+func (c *Client) put(path string, payload []byte) ([]byte, error) {
+	c.logHTTPDebug(http.MethodPut, path, payload)
+	req, err := http.NewRequest(http.MethodPut, c.BaseURL+path, strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
+// GetRaw performs a GET request and returns the response body.
+func (c *Client) GetRaw(path string) ([]byte, error) {
+	return c.get(path)
+}
+
+// PutRaw performs a PUT request with a JSON body.
+func (c *Client) PutRaw(path string, payload []byte) ([]byte, error) {
+	return c.put(path, payload)
+}
+
+func (c *Client) delete(path string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// DeleteRaw sends an HTTP DELETE to path.
+func (c *Client) DeleteRaw(path string) error {
+	return c.delete(path)
+}
+
 // DiscoveryItem is a generic discovered resource
 type DiscoveryItem struct {
 	ID          int64  `json:"id"`
@@ -97,9 +191,10 @@ type DiscoveryResult struct {
 }
 
 type CategoryGroup struct {
-	Name  string          `json:"name"`
-	Icon  string          `json:"icon"`
-	Items []DiscoveryItem `json:"items"`
+	Name       string          `json:"name"`
+	Icon       string          `json:"icon"`
+	ParentPath string          `json:"parentPath,omitempty"` // e.g. "Library/Automation"
+	Items      []DiscoveryItem `json:"items"`
 }
 
 // paginate fetches all pages of a list endpoint
@@ -177,6 +272,8 @@ func (c *Client) Discover() *DiscoveryResult {
 		dataKey  string
 		typeHint string
 		subField string // optional nested field for sub-type
+		// parent path for UI grouping (supports multiple levels)
+		parentPath string
 	}
 
 	fetchers := []fetcher{
@@ -195,9 +292,9 @@ func (c *Client) Discover() *DiscoveryResult {
 		// Compute
 		{category: "Instances", icon: "server", endpoint: "/api/instances", dataKey: "instances", typeHint: "instance", subField: "instanceType"},
 		{category: "Virtual Images", icon: "image", endpoint: "/api/virtual-images", dataKey: "virtualImages", typeHint: "virtualImage"},
-		{category: "Instance Types", icon: "template", endpoint: "/api/library/instance-types", dataKey: "instanceTypes", typeHint: "instanceType"},
-		{category: "Layouts", icon: "template", endpoint: "/api/library/layouts", dataKey: "layouts", typeHint: "layout"},
-		{category: "Node Types", icon: "template", endpoint: "/api/library/container-types", dataKey: "containerTypes", typeHint: "nodeType"},
+		{category: "Instance Types", icon: "template", endpoint: "/api/library/instance-types", dataKey: "instanceTypes", typeHint: "instanceType", parentPath: "Library"},
+		{category: "Layouts", icon: "template", endpoint: "/api/library/layouts", dataKey: "layouts", typeHint: "layout", parentPath: "Library"},
+		{category: "Node Types", icon: "template", endpoint: "/api/library/container-types", dataKey: "containerTypes", typeHint: "nodeType", parentPath: "Library"},
 
 		// Catalog & Blueprints
 		{category: "Catalog Items", icon: "catalog", endpoint: "/api/catalog-item-types", dataKey: "catalogItemTypes", typeHint: "catalogItem"},
@@ -205,9 +302,12 @@ func (c *Client) Discover() *DiscoveryResult {
 		{category: "Apps", icon: "app", endpoint: "/api/apps", dataKey: "apps", typeHint: "app"},
 
 		// Automation
-		{category: "Tasks", icon: "task", endpoint: "/api/tasks", dataKey: "tasks", typeHint: "task", subField: "taskType"},
-		{category: "Workflows", icon: "workflow", endpoint: "/api/task-sets", dataKey: "taskSets", typeHint: "workflow"},
-		{category: "Executions", icon: "run", endpoint: "/api/execution-request", dataKey: "executionRequests", typeHint: "execution"},
+		{category: "Tasks", icon: "task", endpoint: "/api/tasks", dataKey: "tasks", typeHint: "task", subField: "taskType", parentPath: "Library/Automation"},
+		{category: "Workflows", icon: "workflow", endpoint: "/api/task-sets", dataKey: "taskSets", typeHint: "workflow", parentPath: "Library/Automation"},
+		{category: "Executions", icon: "run", endpoint: "/api/execution-request", dataKey: "executionRequests", typeHint: "execution", parentPath: "Library/Automation"},
+		{category: "Inputs", icon: "form", endpoint: "/api/library/option-types", dataKey: "optionTypes", typeHint: "input", subField: "type", parentPath: "Library/Options"},
+		{category: "Option Lists", icon: "list", endpoint: "/api/library/option-type-lists", dataKey: "optionTypeLists", typeHint: "optionList", subField: "type", parentPath: "Library/Options"},
+		{category: "Forms", icon: "form", endpoint: "/api/library/option-type-forms", dataKey: "optionTypeForms", typeHint: "form", parentPath: "Library/Options"},
 
 		// Policies & RBAC
 		{category: "Tenants", icon: "tenant", endpoint: "/api/accounts", dataKey: "accounts", typeHint: "tenant"},
@@ -236,6 +336,7 @@ func (c *Client) Discover() *DiscoveryResult {
 
 	// Deduplicate categories
 	categoryMap := map[string]*CategoryGroup{}
+	categorySeenIDs := map[string]map[int64]struct{}{}
 
 	for _, f := range fetchers {
 		items, err := c.paginate(f.endpoint, f.dataKey)
@@ -246,28 +347,61 @@ func (c *Client) Discover() *DiscoveryResult {
 
 		grp, exists := categoryMap[f.category]
 		if !exists {
-			grp = &CategoryGroup{Name: f.category, Icon: f.icon}
+			grp = &CategoryGroup{Name: f.category, Icon: f.icon, ParentPath: f.parentPath}
 			categoryMap[f.category] = grp
+		}
+		if _, ok := categorySeenIDs[f.category]; !ok {
+			categorySeenIDs[f.category] = map[int64]struct{}{}
 		}
 
 		for _, raw := range items {
 			id := extractInt64Field(raw, "id")
-			name := extractStringField(raw, "name")
-			if name == "" {
-				name = extractStringField(raw, "username")
+			itemRaw := raw
+			// List task-sets are often shallow; fetch full task set for migration (taskSetTasks, optionTypes).
+			if f.dataKey == "taskSets" && id > 0 {
+				if body, err := c.get(fmt.Sprintf("/api/task-sets/%d", id)); err == nil {
+					var w map[string]json.RawMessage
+					if json.Unmarshal(body, &w) == nil {
+						if ts, ok := w["taskSet"]; ok {
+							itemRaw = ts
+						}
+					}
+				}
 			}
-			desc := extractStringField(raw, "description")
+			// List forms are shallow; fetch full option-type-form (options + fieldGroups + cross-field config refs).
+			if f.dataKey == "optionTypeForms" && id > 0 {
+				if body, err := c.get(fmt.Sprintf("/api/library/option-type-forms/%d", id)); err == nil {
+					var w map[string]json.RawMessage
+					if json.Unmarshal(body, &w) == nil {
+						if tf, ok := w["optionTypeForm"]; ok {
+							itemRaw = tf
+						}
+					}
+				}
+			}
+			name := extractStringField(itemRaw, "name")
+			if name == "" {
+				name = extractStringField(itemRaw, "username")
+			}
+			desc := extractStringField(itemRaw, "description")
 			subType := ""
 			if f.subField != "" {
 				// subField might be nested object with "name"
 				var obj map[string]json.RawMessage
-				json.Unmarshal(raw, &obj)
+				json.Unmarshal(itemRaw, &obj)
 				if nested, ok := obj[f.subField]; ok {
 					subType = extractStringField(nested, "name")
 					if subType == "" {
 						json.Unmarshal(nested, &subType)
 					}
 				}
+			}
+
+			if id > 0 {
+				if _, seen := categorySeenIDs[f.category][id]; seen {
+					continue
+				}
+				categorySeenIDs[f.category][id] = struct{}{}
 			}
 
 			grp.Items = append(grp.Items, DiscoveryItem{
@@ -277,13 +411,25 @@ func (c *Client) Discover() *DiscoveryResult {
 				Description: desc,
 				Category:    f.category,
 				SubType:     subType,
-				RawJSON:     string(raw),
+				RawJSON:     string(itemRaw),
 			})
 			result.Total++
 		}
 	}
 
-	for _, grp := range categoryMap {
+	var categoryNames []string
+	for name := range categoryMap {
+		categoryNames = append(categoryNames, name)
+	}
+	sort.Slice(categoryNames, func(i, j int) bool {
+		a := categoryMap[categoryNames[i]]
+		b := categoryMap[categoryNames[j]]
+		ap := strings.ToLower(a.ParentPath + "/" + a.Name)
+		bp := strings.ToLower(b.ParentPath + "/" + b.Name)
+		return ap < bp
+	})
+	for _, name := range categoryNames {
+		grp := categoryMap[name]
 		if len(grp.Items) > 0 {
 			result.Categories = append(result.Categories, *grp)
 		}
