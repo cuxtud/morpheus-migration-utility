@@ -29,10 +29,10 @@ mac:
 	@echo "✓ Built: macOS binaries"
 
 run:
-	go run $(CMD)/main.go
+	go run $(CMD)
 
 dev:
-	PORT=8443 go run $(CMD)/main.go
+	PORT=8443 go run $(CMD)
 
 clean:
 	rm -rf $(BUILD_DIR) cert.pem key.pem

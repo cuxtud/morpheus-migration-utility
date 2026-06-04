@@ -72,11 +72,101 @@ func TestSanitizeDanglingFormConfigRefs_dropsMissingPoolField(t *testing.T) {
 		"poolFieldType": "field",
 	}
 	sanitizeDanglingFormConfigRefs(cfg, valid)
+	stripEmptyStringsFromOptionConfig(cfg)
+	removeOrphanFieldTypeKeys(cfg)
 	if _, ok := cfg["poolField"]; ok {
 		t.Fatalf("expected poolField removed, got %#v", cfg)
 	}
+	if _, ok := cfg["poolFieldType"]; ok {
+		t.Fatalf("expected poolFieldType removed after dangling poolField, got %#v", cfg)
+	}
 	if cfg["groupField"] != "mgroup" || cfg["cloudField"] != "mcloud" {
 		t.Fatalf("expected refs kept: %#v", cfg)
+	}
+}
+
+func TestRemoveOrphanFieldTypeKeys_noPoolField(t *testing.T) {
+	cfg := map[string]interface{}{
+		"poolFieldType": "field",
+		"layoutField":   "version",
+		"layoutFieldType": "field",
+	}
+	removeOrphanFieldTypeKeys(cfg)
+	if _, ok := cfg["poolFieldType"]; ok {
+		t.Fatalf("expected poolFieldType removed: %#v", cfg)
+	}
+	if cfg["layoutFieldType"] != "field" {
+		t.Fatalf("expected layoutFieldType kept: %#v", cfg)
+	}
+}
+
+func TestDedupeFormOptionFieldNames_secondUsesCode(t *testing.T) {
+	a := map[string]interface{}{"fieldName": "diskThree", "code": "diskThree"}
+	b := map[string]interface{}{"fieldName": "diskThree", "code": "diskThree_1"}
+	metas := []formOptMeta{
+		{opt: a, finalCode: "diskThree", fieldName: "diskThree"},
+		{opt: b, finalCode: "diskThree_1", fieldName: "diskThree"},
+	}
+	dedupeFormOptionFieldNames(metas)
+	if a["fieldName"] != "diskThree" {
+		t.Fatalf("first: %#v", a)
+	}
+	if b["fieldName"] != "diskThree_1" {
+		t.Fatalf("second should take unique code as fieldName: %#v", b)
+	}
+	if metas[1].fieldName != "diskThree_1" {
+		t.Fatalf("meta sync: %q", metas[1].fieldName)
+	}
+}
+
+func TestRemoveIncompleteLayoutFieldRefs_dropsFieldWithoutLayoutID(t *testing.T) {
+	cfg := map[string]interface{}{
+		"layoutField": "version", "layoutFieldType": "field", "cloudField": "mcloud",
+	}
+	removeIncompleteLayoutFieldRefs(cfg)
+	if _, ok := cfg["layoutField"]; ok {
+		t.Fatalf("expected layout refs dropped: %#v", cfg)
+	}
+	if cfg["cloudField"] != "mcloud" {
+		t.Fatalf("cloudField kept: %#v", cfg)
+	}
+}
+
+func TestRemoveIncompleteLayoutFieldRefs_keepsWhenLayoutIDSet(t *testing.T) {
+	cfg := map[string]interface{}{
+		"layoutField": "version", "layoutFieldType": "field", "layoutId": "42",
+	}
+	removeIncompleteLayoutFieldRefs(cfg)
+	if cfg["layoutField"] != "version" {
+		t.Fatalf("expected keep: %#v", cfg)
+	}
+}
+
+func TestRewriteUUIDFieldGroupCodesToSlugs(t *testing.T) {
+	form := map[string]interface{}{
+		"fieldGroups": []interface{}{
+			map[string]interface{}{"code": "c575e5d3-6f64-4e55-9c59-7e79cb2d0f4a", "name": "A"},
+		},
+	}
+	rewriteUUIDFieldGroupCodesToSlugs(form)
+	fg := form["fieldGroups"].([]interface{})[0].(map[string]interface{})
+	if fg["code"] != "fieldgroup0" {
+		t.Fatalf("got %#v", fg["code"])
+	}
+}
+
+func TestStripEmptyStringsFromOptionConfig_dropsEmptyStrings(t *testing.T) {
+	cfg := map[string]interface{}{
+		"layoutField": "version",
+		"layoutId":    "",
+		"showPricing": false,
+	}
+	stripEmptyStringsFromOptionConfig(cfg)
+	if _, ok := cfg["layoutId"]; ok {
+		t.Fatalf("expected empty layoutId dropped: %#v", cfg)
+	}
+	if cfg["layoutField"] != "version" {
+		t.Fatalf("expected layoutField kept: %#v", cfg)
 	}
 }
 

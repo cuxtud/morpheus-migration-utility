@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/cuxtud/morpheus-migration-utility/internal/migrate"
-	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
+	"github.com/cuxtud/morpheus-migration-utility/internal/profiles"
 )
 
 //go:embed web/static/*
@@ -43,53 +43,19 @@ func init() {
 }
 
 const (
-	defaultPort  = "443"
-	certFile     = "cert.pem"
-	keyFile      = "key.pem"
-	profilesFile = "connections.json"
+	defaultPort = "443"
+	certFile    = "cert.pem"
+	keyFile     = "key.pem"
 )
-
-// ─── Connection Profiles ──────────────────────────────────────────────────────
-
-type Profile struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Token   string `json:"token"`
-	SkipTLS bool   `json:"skipTls"`
-}
-
-type ProfileStore struct {
-	Profiles []Profile `json:"profiles"`
-}
-
-func loadProfiles() (*ProfileStore, error) {
-	data, err := os.ReadFile(profilesFile)
-	if os.IsNotExist(err) {
-		return &ProfileStore{Profiles: []Profile{}}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var store ProfileStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return nil, err
-	}
-	return &store, nil
-}
-
-func saveProfiles(store *ProfileStore) error {
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(profilesFile, data, 0600)
-}
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = defaultPort
+	}
+
+	if err := initProfileStore(); err != nil {
+		log.Fatalf("Failed to initialize storage: %v", err)
 	}
 
 	// Ensure TLS cert exists
@@ -102,10 +68,27 @@ func main() {
 	// API routes
 	mux.HandleFunc("/api/test-connection", handleTestConnection)
 	mux.HandleFunc("/api/discover", handleDiscover)
+	mux.HandleFunc("/api/discoveries", handleMigrationDiscoveries)
 	mux.HandleFunc("/api/migrate", handleMigrate)
 	mux.HandleFunc("/api/profiles", handleListProfiles)
 	mux.HandleFunc("/api/profiles/save", handleSaveProfile)
 	mux.HandleFunc("/api/profiles/delete", handleDeleteProfile)
+	mux.HandleFunc("/api/profiles/test", handleTestProfile)
+	mux.HandleFunc("/api/profiles/discover", handleDiscoverProfile)
+	mux.HandleFunc("/api/profiles/discover-all", handleDiscoverAllProfiles)
+	mux.HandleFunc("/api/profiles/snapshot", handleGetProfileSnapshot)
+	mux.HandleFunc("/api/profiles/snapshots", handleListProfileSnapshots)
+	mux.HandleFunc("/api/session", handleWorkflowSession)
+	mux.HandleFunc("/api/storage", handleStorageInfo)
+	// Legacy fleet routes → same handlers
+	mux.HandleFunc("/api/appliances", handleListProfiles)
+	mux.HandleFunc("/api/appliances/save", handleSaveProfile)
+	mux.HandleFunc("/api/appliances/delete", handleDeleteProfile)
+	mux.HandleFunc("/api/appliances/test", handleTestProfile)
+	mux.HandleFunc("/api/appliances/discover", handleDiscoverProfile)
+	mux.HandleFunc("/api/appliances/discover-all", handleDiscoverAllProfiles)
+	mux.HandleFunc("/api/appliances/snapshot", handleGetProfileSnapshot)
+	mux.HandleFunc("/api/appliances/snapshots", handleListProfileSnapshots)
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"version": version})
 	})
@@ -144,9 +127,12 @@ func main() {
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 type connReq struct {
-	URL     string `json:"url"`
-	Token   string `json:"token"`
-	SkipTLS bool   `json:"skipTls"`
+	ProfileID string `json:"profileId"`
+	URL       string `json:"url"`
+	Token     string `json:"token"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	SkipTLS   bool   `json:"skipTls"`
 }
 
 func handleTestConnection(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +145,11 @@ func handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	c := morpheus.NewClient(req.URL, req.Token, req.SkipTLS)
+	c, err := resolveConnClient(req)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 	user, err := c.TestConnection()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadGateway)
@@ -178,8 +168,40 @@ func handleDiscover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	c := morpheus.NewClient(req.URL, req.Token, req.SkipTLS)
+	c, err := resolveConnClient(req)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 	result := c.Discover()
+	if profileRepo.SupportsJSONB() {
+		src := migrate.ApplInfo{
+			ProfileID: req.ProfileID,
+			URL:       req.URL,
+			Token:     req.Token,
+			Username:  req.Username,
+			Password:  req.Password,
+			SkipTLS:   req.SkipTLS,
+		}
+		if strings.TrimSpace(req.ProfileID) != "" {
+			if p, err := profileRepo.Find(req.ProfileID); err == nil {
+				src.URL = p.URL
+				src.Token = p.Token
+				src.Username = p.Username
+				src.Password = p.Password
+				src.SkipTLS = p.SkipTLS
+			}
+		}
+		discoveryID, _ := profileRepo.SaveMigrationDiscovery(&profiles.MigrationDiscoveryRecord{
+			Source:    src,
+			Discovery: result,
+		})
+		jsonOK(w, map[string]any{
+			"discoveryId": discoveryID,
+			"result":      result,
+		})
+		return
+	}
 	jsonOK(w, result)
 }
 
@@ -193,7 +215,34 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if err := enrichMigrateApplInfo(&req.Source); err != nil {
+		jsonError(w, "source: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := enrichMigrateApplInfo(&req.Destination); err != nil {
+		jsonError(w, "destination: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	started := time.Now().UTC()
 	result := migrate.Run(req)
+	if profileRepo.SupportsJSONB() && result != nil {
+		sourceTime := strings.TrimSpace(req.DiscoveryTime)
+		if req.DiscoveryID > 0 {
+			if rec, err := profileRepo.LoadMigrationDiscovery(req.DiscoveryID); err == nil {
+				sourceTime = rec.CreatedAt
+			}
+		}
+		result.SourceDiscoveryID = req.DiscoveryID
+		result.SourceDiscoveryTime = sourceTime
+		_, _ = profileRepo.SaveMigrationRun(&profiles.MigrationRunRecord{
+			Request:             req,
+			Result:              *result,
+			StartedAt:           started.Format(time.RFC3339),
+			FinishedAt:          time.Now().UTC().Format(time.RFC3339),
+			SourceDiscoveryID:   result.SourceDiscoveryID,
+			SourceDiscoveryTime: result.SourceDiscoveryTime,
+		}, req.DiscoveryID)
+	}
 	jsonOK(w, result)
 }
 
@@ -220,7 +269,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -280,90 +329,4 @@ func ensureCert(certPath, keyPath string) error {
 
 	log.Printf("Self-signed cert generated: %s / %s (valid 10 years)", certPath, keyPath)
 	return nil
-}
-
-// ─── Profile Handlers ─────────────────────────────────────────────────────────
-
-func handleListProfiles(w http.ResponseWriter, r *http.Request) {
-	store, err := loadProfiles()
-	if err != nil {
-		jsonError(w, "failed to load profiles: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonOK(w, store)
-}
-
-func handleSaveProfile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var p Profile
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	if p.Name == "" || p.URL == "" || p.Token == "" {
-		jsonError(w, "name, url and token are required", http.StatusBadRequest)
-		return
-	}
-
-	store, err := loadProfiles()
-	if err != nil {
-		jsonError(w, "failed to load profiles", http.StatusInternalServerError)
-		return
-	}
-
-	if p.ID == "" {
-		p.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	found := false
-	for i, existing := range store.Profiles {
-		if existing.ID == p.ID {
-			store.Profiles[i] = p
-			found = true
-			break
-		}
-	}
-	if !found {
-		store.Profiles = append(store.Profiles, p)
-	}
-
-	if err := saveProfiles(store); err != nil {
-		jsonError(w, "failed to save profiles", http.StatusInternalServerError)
-		return
-	}
-	jsonOK(w, p)
-}
-
-func handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		jsonError(w, "id is required", http.StatusBadRequest)
-		return
-	}
-
-	store, err := loadProfiles()
-	if err != nil {
-		jsonError(w, "failed to load profiles", http.StatusInternalServerError)
-		return
-	}
-
-	filtered := store.Profiles[:0]
-	for _, p := range store.Profiles {
-		if p.ID != id {
-			filtered = append(filtered, p)
-		}
-	}
-	store.Profiles = filtered
-
-	if err := saveProfiles(store); err != nil {
-		jsonError(w, "failed to save profiles", http.StatusInternalServerError)
-		return
-	}
-	jsonOK(w, map[string]string{"status": "deleted"})
 }

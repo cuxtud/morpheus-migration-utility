@@ -185,9 +185,10 @@ type DiscoveryItem struct {
 
 // DiscoveryResult holds all discovered items grouped by category
 type DiscoveryResult struct {
-	Categories []CategoryGroup `json:"categories"`
-	Total      int             `json:"total"`
-	Errors     []string        `json:"errors"`
+	Categories   []CategoryGroup `json:"categories"`
+	Total        int             `json:"total"`
+	Errors       []string        `json:"errors"`
+	DiscoveredAt string          `json:"discoveredAt,omitempty"`
 }
 
 type CategoryGroup struct {
@@ -262,8 +263,100 @@ func extractInt64Field(raw json.RawMessage, field string) int64 {
 	return n
 }
 
+func extractBoolField(raw json.RawMessage, field string) (bool, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false, false
+	}
+	val, ok := obj[field]
+	if !ok {
+		return false, false
+	}
+	var b bool
+	if err := json.Unmarshal(val, &b); err == nil {
+		return b, true
+	}
+	var s string
+	if err := json.Unmarshal(val, &s); err == nil {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "true", "yes", "1":
+			return true, true
+		case "false", "no", "0":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func extractNestedStringField(raw json.RawMessage, field string, nested string) string {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	val, ok := obj[field]
+	if !ok {
+		return ""
+	}
+	return extractStringField(val, nested)
+}
+
+func hasNonNullObjectField(raw json.RawMessage, field string) bool {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	val, ok := obj[field]
+	if !ok {
+		return false
+	}
+	v := strings.TrimSpace(string(val))
+	if v == "" || v == "null" {
+		return false
+	}
+	var nested map[string]interface{}
+	return json.Unmarshal(val, &nested) == nil && len(nested) > 0
+}
+
+// isSeededSystemLibraryItem checks common Morpheus flags used by built-in seeded library records.
+// We only use this for migration-sensitive categories (instance types, layouts, node types).
+func isSeededSystemLibraryItem(raw json.RawMessage) bool {
+	// Strong signal from Morpheus library payloads:
+	// seeded/system records typically have account: null
+	// user-created records have account object (e.g. Master tenant).
+	if !hasNonNullObjectField(raw, "account") {
+		return true
+	}
+
+	// Explicit booleans used by many Morpheus objects.
+	for _, key := range []string{"isSystem", "system", "seeded", "builtIn", "internal"} {
+		if v, ok := extractBoolField(raw, key); ok && v {
+			return true
+		}
+	}
+
+	// Some APIs expose a source identifier for seeded content.
+	for _, key := range []string{"source", "sourceType", "provisionTypeCode", "code"} {
+		v := strings.ToLower(strings.TrimSpace(extractStringField(raw, key)))
+		if strings.Contains(v, "morpheus") || strings.Contains(v, "system") || strings.Contains(v, "seed") {
+			return true
+		}
+	}
+
+	// Some payloads expose nested owner/provider metadata.
+	for _, p := range [][2]string{{"owner", "code"}, {"owner", "name"}, {"provider", "code"}, {"provider", "name"}} {
+		v := strings.ToLower(strings.TrimSpace(extractNestedStringField(raw, p[0], p[1])))
+		if strings.Contains(v, "morpheus") || strings.Contains(v, "system") || strings.Contains(v, "seed") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (c *Client) Discover() *DiscoveryResult {
-	result := &DiscoveryResult{}
+	result := &DiscoveryResult{
+		DiscoveredAt: time.Now().UTC().Format(time.RFC3339),
+	}
 
 	type fetcher struct {
 		category string
@@ -284,14 +377,7 @@ func (c *Client) Discover() *DiscoveryResult {
 		// Integrations
 		{category: "Integrations", icon: "plug", endpoint: "/api/integrations", dataKey: "integrations", typeHint: "integration", subField: "integrationType"},
 
-		// Network
-		{category: "Networks", icon: "network", endpoint: "/api/networks", dataKey: "networks", typeHint: "network"},
-		{category: "Network Pools", icon: "network", endpoint: "/api/networks/pools", dataKey: "networkPools", typeHint: "networkPool"},
-		{category: "Network Domains", icon: "network", endpoint: "/api/networks/domains", dataKey: "networkDomains", typeHint: "networkDomain"},
-
-		// Compute
-		{category: "Instances", icon: "server", endpoint: "/api/instances", dataKey: "instances", typeHint: "instance", subField: "instanceType"},
-		{category: "Virtual Images", icon: "image", endpoint: "/api/virtual-images", dataKey: "virtualImages", typeHint: "virtualImage"},
+		// Compute / library
 		{category: "Instance Types", icon: "template", endpoint: "/api/library/instance-types", dataKey: "instanceTypes", typeHint: "instanceType", parentPath: "Library"},
 		{category: "Layouts", icon: "template", endpoint: "/api/library/layouts", dataKey: "layouts", typeHint: "layout", parentPath: "Library"},
 		{category: "Node Types", icon: "template", endpoint: "/api/library/container-types", dataKey: "containerTypes", typeHint: "nodeType", parentPath: "Library"},
@@ -304,7 +390,6 @@ func (c *Client) Discover() *DiscoveryResult {
 		// Automation
 		{category: "Tasks", icon: "task", endpoint: "/api/tasks", dataKey: "tasks", typeHint: "task", subField: "taskType", parentPath: "Library/Automation"},
 		{category: "Workflows", icon: "workflow", endpoint: "/api/task-sets", dataKey: "taskSets", typeHint: "workflow", parentPath: "Library/Automation"},
-		{category: "Executions", icon: "run", endpoint: "/api/execution-request", dataKey: "executionRequests", typeHint: "execution", parentPath: "Library/Automation"},
 		{category: "Inputs", icon: "form", endpoint: "/api/library/option-types", dataKey: "optionTypes", typeHint: "input", subField: "type", parentPath: "Library/Options"},
 		{category: "Option Lists", icon: "list", endpoint: "/api/library/option-type-lists", dataKey: "optionTypeLists", typeHint: "optionList", subField: "type", parentPath: "Library/Options"},
 		{category: "Forms", icon: "form", endpoint: "/api/library/option-type-forms", dataKey: "optionTypeForms", typeHint: "form", parentPath: "Library/Options"},
@@ -315,20 +400,6 @@ func (c *Client) Discover() *DiscoveryResult {
 		{category: "Users", icon: "user", endpoint: "/api/users", dataKey: "users", typeHint: "user"},
 		{category: "Policies", icon: "policy", endpoint: "/api/policies", dataKey: "policies", typeHint: "policy"},
 		{category: "Groups", icon: "group", endpoint: "/api/groups", dataKey: "groups", typeHint: "group"},
-
-		// Credentials & Security
-		{category: "Credentials", icon: "key", endpoint: "/api/credentials", dataKey: "credentials", typeHint: "credential", subField: "type"},
-
-		// Storage
-		{category: "Storage Buckets", icon: "storage", endpoint: "/api/storage-buckets", dataKey: "storageBuckets", typeHint: "storageBucket"},
-		{category: "Storage Servers", icon: "storage", endpoint: "/api/storage-servers", dataKey: "storageServers", typeHint: "storageServer"},
-
-		// Monitoring
-		{category: "Monitors", icon: "monitor", endpoint: "/api/monitoring/checks", dataKey: "checks", typeHint: "monitorCheck"},
-		{category: "Alerts", icon: "alert", endpoint: "/api/monitoring/alerts", dataKey: "alerts", typeHint: "alert"},
-
-		// Kubernetes
-		{category: "Clusters", icon: "cluster", endpoint: "/api/clusters", dataKey: "clusters", typeHint: "cluster", subField: "type"},
 
 		// Cypher
 		{category: "Cypher", icon: "lock", endpoint: "/api/cypher", dataKey: "cyphers", typeHint: "cypher"},
@@ -394,6 +465,13 @@ func (c *Client) Discover() *DiscoveryResult {
 					if subType == "" {
 						json.Unmarshal(nested, &subType)
 					}
+				}
+			}
+
+			// Ignore seeded/system records for migration in these categories.
+			if f.typeHint == "instanceType" || f.typeHint == "layout" || f.typeHint == "nodeType" {
+				if isSeededSystemLibraryItem(itemRaw) {
+					continue
 				}
 			}
 

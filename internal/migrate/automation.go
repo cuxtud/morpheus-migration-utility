@@ -38,16 +38,22 @@ func sortItemsForMigration(items []SelectedItem) []SelectedItem {
 
 func itemTypeOrder(t string) int {
 	switch t {
-	case "task":
+	case "nodeType":
 		return 0
-	case "workflow":
+	case "task":
 		return 1
-	case "optionList":
+	case "workflow":
 		return 2
-	case "input":
+	case "layout":
 		return 3
-	case "form":
+	case "instanceType":
 		return 4
+	case "optionList":
+		return 5
+	case "input":
+		return 6
+	case "form":
+		return 7
 	default:
 		return 99
 	}
@@ -761,6 +767,130 @@ func sanitizeDanglingFormConfigRefs(cfg interface{}, validLower map[string]struc
 	}
 }
 
+// formConfigFieldTypePrefixes are paired with "<prefix>Field" and "<prefix>FieldType" in Morpheus option configs.
+var formConfigFieldTypePrefixes = []string{
+	"group", "cloud", "pool", "layout", "plan", "disk", "resourcePool", "instanceType",
+}
+
+// removeOrphanFieldTypeKeys deletes *FieldType when *Field is missing or empty (e.g. poolField removed but poolFieldType still "field").
+func removeOrphanFieldTypeKeys(cfg map[string]interface{}) {
+	for _, prefix := range formConfigFieldTypePrefixes {
+		typeKey := prefix + "FieldType"
+		fieldKey := prefix + "Field"
+		if _, hasType := cfg[typeKey]; !hasType {
+			continue
+		}
+		fv, hasField := cfg[fieldKey]
+		if !hasField {
+			delete(cfg, typeKey)
+			continue
+		}
+		fs, ok := fv.(string)
+		if !ok || strings.TrimSpace(fs) == "" {
+			delete(cfg, typeKey)
+		}
+	}
+}
+
+// stripEmptyStringsFromOptionConfig removes "" string values from option config maps so the API does not get inconsistent empty refs.
+func stripEmptyStringsFromOptionConfig(cfg interface{}) {
+	switch v := cfg.(type) {
+	case map[string]interface{}:
+		var drop []string
+		for k, val := range v {
+			switch t := val.(type) {
+			case string:
+				if strings.TrimSpace(t) == "" {
+					drop = append(drop, k)
+				}
+			case map[string]interface{}:
+				stripEmptyStringsFromOptionConfig(t)
+			case []interface{}:
+				for _, el := range t {
+					stripEmptyStringsFromOptionConfig(el)
+				}
+			}
+		}
+		for _, k := range drop {
+			delete(v, k)
+		}
+	case []interface{}:
+		for _, el := range v {
+			stripEmptyStringsFromOptionConfig(el)
+		}
+	}
+}
+
+func normalizeFormOptionConfigMaps(form map[string]interface{}) {
+	walkFormOptions(form, func(_ string, opt map[string]interface{}) {
+		cfg, ok := opt["config"].(map[string]interface{})
+		if !ok || cfg == nil {
+			return
+		}
+		stripEmptyStringsFromOptionConfig(cfg)
+		removeOrphanFieldTypeKeys(cfg)
+		removeIncompleteLayoutFieldRefs(cfg)
+	})
+}
+
+// removeIncompleteLayoutFieldRefs drops layout *Field refs when layoutId is missing; Morpheus often rejects plan/layoutFieldType:field without a layout id.
+func removeIncompleteLayoutFieldRefs(cfg map[string]interface{}) {
+	if strings.TrimSpace(stringFromAny(cfg["layoutFieldType"])) != "field" {
+		return
+	}
+	if strings.TrimSpace(stringFromAny(cfg["layoutId"])) != "" {
+		return
+	}
+	delete(cfg, "layoutField")
+	delete(cfg, "layoutFieldType")
+	delete(cfg, "layoutId")
+}
+
+// rewriteUUIDFieldGroupCodesToSlugs replaces UUID fieldGroup codes on create so the destination API accepts new groups.
+func rewriteUUIDFieldGroupCodesToSlugs(form map[string]interface{}) {
+	fgs, ok := form["fieldGroups"].([]interface{})
+	if !ok {
+		return
+	}
+	for i, g := range fgs {
+		gm, ok := g.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		c := strings.TrimSpace(stringFromAny(gm["code"]))
+		if isLikelyUUID(c) {
+			gm["code"] = fmt.Sprintf("fieldgroup%d", i)
+		}
+	}
+}
+
+// dedupeFormOptionFieldNames ensures each option has a distinct fieldName (customOptions key). Duplicate names (e.g. two fields both "diskThree") cause Morpheus 500s.
+func dedupeFormOptionFieldNames(metas []formOptMeta) {
+	used := map[string]struct{}{}
+	for i := range metas {
+		m := &metas[i]
+		opt := m.opt
+		fn := strings.TrimSpace(stringFromAny(opt["fieldName"]))
+		if fn == "" {
+			fn = strings.TrimSpace(m.finalCode)
+		}
+		if fn == "" {
+			continue
+		}
+		if _, dup := used[strings.ToLower(fn)]; dup {
+			fn = strings.TrimSpace(m.finalCode)
+			opt["fieldName"] = fn
+		} else if strings.TrimSpace(stringFromAny(opt["fieldName"])) == "" {
+			opt["fieldName"] = fn
+		}
+		if fn == "" {
+			continue
+		}
+		used[strings.ToLower(fn)] = struct{}{}
+		m.fieldName = fn
+	}
+}
+
 func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]interface{}, destForm map[string]interface{}) ([]byte, error) {
 	var clone map[string]interface{}
 	raw, err := json.Marshal(form)
@@ -773,6 +903,10 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 
 	for _, k := range []string{"id", "dateCreated", "lastUpdated", "account", "accountId", "uuid", "owner", "stats"} {
 		delete(clone, k)
+	}
+
+	if destForm == nil {
+		rewriteUUIDFieldGroupCodesToSlugs(clone)
 	}
 
 	destIdx := map[string]map[string]interface{}{}
@@ -872,12 +1006,15 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 		return nil, listErr
 	}
 
+	dedupeFormOptionFieldNames(metas)
+
 	validCodes := collectFormOptionCodesLower(clone)
 	for i := range metas {
 		if cfg, ok := metas[i].opt["config"].(map[string]interface{}); ok {
 			sanitizeDanglingFormConfigRefs(cfg, validCodes)
 		}
 	}
+	normalizeFormOptionConfigMaps(clone)
 
 	lookup := buildFormDepLookup(metas)
 	for i := range metas {
@@ -1224,40 +1361,35 @@ func findOptionTypeListIDByName(dst *morpheus.Client, name string) int64 {
 	if name == "" {
 		return 0
 	}
-	paths := []string{
-		fmt.Sprintf("/api/library/option-type-lists?phrase=%s&max=100&offset=0", url.QueryEscape(name)),
-		fmt.Sprintf("/api/option-type-lists?phrase=%s&max=100&offset=0", url.QueryEscape(name)),
-	}
+	p := fmt.Sprintf("/api/library/option-type-lists?phrase=%s&max=100&offset=0", url.QueryEscape(name))
 	want := strings.ToLower(name)
-	for _, p := range paths {
-		body, err := dst.GetRaw(p)
-		if err != nil {
+	body, err := dst.GetRaw(p)
+	if err != nil {
+		return 0
+	}
+	var wrap map[string]json.RawMessage
+	if json.Unmarshal(body, &wrap) != nil {
+		return 0
+	}
+	raw, ok := wrap["optionTypeLists"]
+	if !ok {
+		return 0
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return 0
+	}
+	for _, it := range items {
+		var row map[string]interface{}
+		if json.Unmarshal(it, &row) != nil {
 			continue
 		}
-		var wrap map[string]json.RawMessage
-		if json.Unmarshal(body, &wrap) != nil {
+		n := strings.ToLower(strings.TrimSpace(stringFromAny(row["name"])))
+		if n != want {
 			continue
 		}
-		raw, ok := wrap["optionTypeLists"]
-		if !ok {
-			continue
-		}
-		var items []json.RawMessage
-		if json.Unmarshal(raw, &items) != nil {
-			continue
-		}
-		for _, it := range items {
-			var row map[string]interface{}
-			if json.Unmarshal(it, &row) != nil {
-				continue
-			}
-			n := strings.ToLower(strings.TrimSpace(stringFromAny(row["name"])))
-			if n != want {
-				continue
-			}
-			if id := intFromAny(row["id"]); id > 0 {
-				return id
-			}
+		if id := intFromAny(row["id"]); id > 0 {
+			return id
 		}
 	}
 	return 0
@@ -1279,31 +1411,22 @@ func createOptionTypeListOnDestination(dst *morpheus.Client, srcObj map[string]i
 		delete(clone, k)
 	}
 
-	endpoints := []string{"/api/library/option-type-lists", "/api/option-type-lists"}
-	var lastErr error
-	for _, ep := range endpoints {
-		payload, err := json.Marshal(map[string]interface{}{"optionTypeList": clone})
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		body, err := dst.PostRaw(ep, payload)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if id := parseOptionTypeListIDFromResponse(body); id > 0 {
-			return id, nil
-		}
-		if id := findOptionTypeListIDByName(dst, stringFromAny(clone["name"])); id > 0 {
-			return id, nil
-		}
-		lastErr = fmt.Errorf("response missing optionTypeList id")
+	payload, err := json.Marshal(map[string]interface{}{"optionTypeList": clone})
+	if err != nil {
+		return 0, err
 	}
-	if lastErr != nil {
-		return 0, lastErr
+	const createPath = "/api/library/option-type-lists"
+	body, err := dst.PostRaw(createPath, payload)
+	if err != nil {
+		return 0, err
 	}
-	return 0, fmt.Errorf("could not create option type list")
+	if id := parseOptionTypeListIDFromResponse(body); id > 0 {
+		return id, nil
+	}
+	if id := findOptionTypeListIDByName(dst, stringFromAny(clone["name"])); id > 0 {
+		return id, nil
+	}
+	return 0, fmt.Errorf("POST %s: response missing optionTypeList id", createPath)
 }
 
 func parseOptionTypeListIDFromResponse(body []byte) int64 {

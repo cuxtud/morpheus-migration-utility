@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: morpheus
+      POSTGRES_PASSWORD: morpheus
+      POSTGRES_DB: morpheus_snapshot
+    ports:
+      - "5432:5432"
+    volumes:
+      - morpheus_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U morpheus -d morpheus_snapshot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  morpheus_pg_data:
