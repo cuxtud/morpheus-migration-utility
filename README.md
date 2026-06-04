@@ -1,5 +1,8 @@
 # Morpheus Snapshot Utility 🔄
 
+📖 **[Documentation](https://cuxtud.github.io/morpheus-migration-utility/)** — download, install, usage, PostgreSQL, troubleshooting  
+📦 **[Releases](https://github.com/cuxtud/morpheus-migration-utility/releases)** — pre-built binaries (Linux, Windows, macOS)
+
 A self-contained tool for HPE Morpheus — **fleet inventory** across many appliances (discovery, license, health) and **migration** from a source appliance to a destination.
 
 ## Features

@@ -1,0 +1,51 @@
+site_name: Morpheus Snapshot
+site_description: HPE Morpheus fleet inventory and migration utility
+site_url: https://cuxtud.github.io/morpheus-migration-utility/
+repo_url: https://github.com/cuxtud/morpheus-migration-utility
+repo_name: cuxtud/morpheus-migration-utility
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Download: download.md
+  - Installation: installation.md
+  - Usage: usage.md
+  - PostgreSQL: postgres.md
+  - Migration reference: migration-reference.md
+  - Troubleshooting: troubleshooting.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cuxtud/morpheus-migration-utility

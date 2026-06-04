@@ -1,4 +1,6 @@
 dist/
+site/
+.venv-docs/
 cert.pem
 key.pem
 *.pem
