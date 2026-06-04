@@ -5,98 +5,805 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Morpheus Snapshot</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
   :root {
-    --bg: #0a0d12;
-    --surface: #10141c;
-    --surface2: #161c28;
-    --border: #1e2636;
-    --border2: #2a3448;
-    --accent: #00d4a8;
-    --accent2: #0099ff;
-    --accent3: #ff6b35;
-    --text: #e2e8f0;
-    --text2: #8899aa;
-    --text3: #4a5568;
-    --success: #22c55e;
-    --error: #ef4444;
-    --warn: #f59e0b;
-    --radius: 6px;
+    --bg: #0b0d10;
+    --bg-elevated: #0f1218;
+    --surface: #12161f;
+    --surface2: #181e2a;
+    --sidebar-bg: #080a0e;
+    --sidebar-border: #151a24;
+    --border: #222836;
+    --border2: #2d3548;
+    --accent: #22d3a6;
+    --accent-dim: rgba(34, 211, 166, 0.14);
+    --accent2: #38bdf8;
+    --accent3: #f97316;
+    --text: #e8edf4;
+    --text2: #94a3b8;
+    --text3: #64748b;
+    --success: #34d399;
+    --error: #f87171;
+    --warn: #fbbf24;
+    --radius: 10px;
+    --radius-sm: 8px;
+    --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    --font-ui: 'DM Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
+  html { height: 100%; }
+
   body {
-    font-family: 'Syne', sans-serif;
+    font-family: var(--font-ui);
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    min-height: 100%;
     overflow-x: hidden;
   }
 
-  /* Grid background */
   body::before {
     content: '';
     position: fixed;
     inset: 0;
-    background-image:
-      linear-gradient(rgba(0, 212, 168, 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0, 212, 168, 0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
+    background:
+      radial-gradient(ellipse 80% 50% at 100% -10%, rgba(34, 211, 166, 0.08), transparent),
+      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(56, 189, 248, 0.06), transparent);
     pointer-events: none;
     z-index: 0;
   }
 
-  .app {
+  /* —— App shell: dark sidebar + main —— */
+  .app-shell {
     position: relative;
     z-index: 1;
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 0 24px 60px;
-  }
-
-  /* Header */
-  header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 24px 0 20px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 32px;
+    min-height: 100vh;
   }
 
-  .logo {
+  .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: linear-gradient(180deg, var(--sidebar-bg) 0%, #0a0c12 100%);
+    border-right: 1px solid var(--sidebar-border);
+    display: flex;
+    flex-direction: column;
+    padding: 22px 18px 20px;
+  }
+
+  .sidebar-brand {
     display: flex;
     align-items: center;
     gap: 12px;
+    margin-bottom: 28px;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--sidebar-border);
   }
 
-  .logo-icon {
-    width: 40px; height: 40px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
+  .sidebar-logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), #0d9488 55%, var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    box-shadow: 0 4px 16px rgba(34, 211, 166, 0.25);
   }
 
-  .logo-text {
-    font-size: 20px;
-    font-weight: 800;
-    letter-spacing: -0.5px;
+  .sidebar-title {
+    display: block;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
   }
 
-  .logo-text span {
+  .sidebar-accent {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+  }
+
+  .sidebar-tagline {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-top: 4px;
+  }
+
+  .sidebar-section-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+    padding-left: 4px;
+  }
+
+  .sidebar-steps { display: flex; flex-direction: column; gap: 4px; }
+
+  .sidebar-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text2);
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .sidebar-step .sidx {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    background: var(--surface2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text3);
+    flex-shrink: 0;
+  }
+
+  .sidebar-step.active {
+    background: var(--accent-dim);
+    border-color: rgba(34, 211, 166, 0.28);
+    color: var(--text);
+  }
+
+  .sidebar-step.active .sidx {
+    background: var(--accent);
+    color: #04120e;
+  }
+
+  .sidebar-step.done { color: var(--text); }
+  .sidebar-step.done .sidx {
+    background: rgba(52, 211, 153, 0.2);
+    color: var(--success);
+  }
+
+  .sidebar-mode-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+  }
+
+  .mode-btn {
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--sidebar-border);
+    background: transparent;
+    color: var(--text2);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .mode-btn:hover { border-color: var(--border2); color: var(--text); }
+  .mode-btn.active {
+    background: var(--accent-dim);
+    border-color: rgba(34, 211, 166, 0.35);
     color: var(--accent);
   }
 
-  .logo-sub {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
+  .fleet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+  }
+
+  .fleet-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: var(--shadow);
+  }
+
+  .fleet-card h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    word-break: break-all;
+  }
+
+  .fleet-card .meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
     color: var(--text3);
-    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+
+  .health-pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
     text-transform: uppercase;
-    margin-top: 1px;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+  }
+
+  .health-pill.ok { background: rgba(52, 211, 153, 0.15); color: var(--success); }
+  .health-pill.warn { background: rgba(251, 191, 36, 0.15); color: var(--warn); }
+  .health-pill.err { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+
+  .appliance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+
+  .appliance-table th,
+  .appliance-table td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .appliance-table th {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+  }
+
+  .appliance-table tbody tr.clickable-row { cursor: pointer; transition: background 0.12s; }
+  .appliance-table tbody tr.clickable-row:hover { background: var(--surface2); }
+
+  .fleet-detail-back {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .fleet-detail-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .fleet-detail-header h2 {
+    font-size: 22px;
+    font-weight: 800;
+    margin: 0 0 6px;
+  }
+
+  .fleet-detail-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text3);
+    line-height: 1.6;
+  }
+
+  .fleet-detail-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+
+  .fleet-detail-section {
+    margin-top: 20px;
+  }
+
+  .fleet-detail-section h3 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text2);
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .fleet-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 12px;
+  }
+
+  .fleet-kv {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+
+  .fleet-kv .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); margin-bottom: 4px; }
+  .fleet-kv .v { font-size: 13px; font-weight: 600; word-break: break-word; }
+
+  .health-dash { display: grid; gap: 14px; }
+  .health-row-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin-bottom: 2px;
+  }
+  .health-summary-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 8px;
+  }
+  .health-summary-item {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 8px;
+    text-align: center;
+  }
+  .health-summary-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin: 0 auto 6px;
+    border: 1px solid transparent;
+  }
+  .health-summary-dot.ok { background: #22c55e; }
+  .health-summary-dot.warn { background: #f59e0b; }
+  .health-summary-dot.err { background: #ef4444; }
+  .health-summary-dot.unknown { background: #64748b; }
+  .health-summary-label { font-size: 12px; color: var(--text2); }
+  .health-levels-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  .health-level {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+  }
+  .health-gauge {
+    --p: 0;
+    --g: #22c55e;
+    width: 66px;
+    height: 66px;
+    margin: 0 auto 8px;
+    border-radius: 50%;
+    background: conic-gradient(var(--g) calc(var(--p) * 1%), #334155 0);
+    display: grid;
+    place-items: center;
+  }
+  .health-gauge::before {
+    content: "";
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: #0f172a;
+    border: 1px solid var(--border2);
+    display: block;
+  }
+  .health-gauge-val {
+    margin-top: -47px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    position: relative;
+    z-index: 1;
+  }
+  .health-level-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text3);
+  }
+  .health-groups {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .health-group {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .health-group h4 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text2);
+  }
+  .health-lines {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+  }
+  .health-line { font-size: 12px; color: var(--text2); }
+  @media (max-width: 920px) {
+    .health-groups { grid-template-columns: 1fr; }
+    .health-lines { grid-template-columns: 1fr; }
+  }
+
+  .fleet-json-block {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text2);
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .fleet-detail-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+
+  .fleet-detail-toolbar input[type="search"] {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .fleet-detail-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .relation-graph-wrap {
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #0b1220;
+    padding: 10px;
+    overflow: auto;
+  }
+  .relation-graph {
+    position: relative;
+    min-width: 760px;
+    min-height: 340px;
+  }
+  .relation-graph svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .relation-node {
+    position: absolute;
+    width: 180px;
+    min-height: 52px;
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    background: linear-gradient(180deg, #111a2d 0%, #0f172a 100%);
+    padding: 8px 10px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  }
+  .relation-node.clickable { cursor: pointer; transition: border-color .12s, transform .12s; }
+  .relation-node.clickable:hover { border-color: #5ea0ff; transform: translateY(-1px); }
+  .relation-node .n-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.3;
+    word-break: break-word;
+  }
+  .relation-node .n-sub {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text3);
+    margin-top: 4px;
+  }
+
+  .sidebar-spacer { flex: 1; min-height: 16px; }
+
+  .sidebar-foot {
+    padding-top: 14px;
+    border-top: 1px solid var(--sidebar-border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  .shell-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+  }
+
+  .topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 22px 28px 18px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .page-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    margin-bottom: 4px;
+  }
+
+  .page-sub {
+    font-size: 13px;
+    color: var(--text2);
+    max-width: 560px;
+    line-height: 1.45;
+  }
+
+  .pill-step {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid rgba(34, 211, 166, 0.25);
+    padding: 6px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .content-scroll {
+    flex: 1;
+    overflow: auto;
+    padding: 22px 28px 100px;
+    max-width: 1320px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* Steps as compact rail */
+  .steps {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .step {
+    flex: 1;
+    min-width: 120px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: default;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    white-space: nowrap;
+  }
+
+  .step + .step { margin-left: 0; }
+
+  .step:first-child,
+  .step:last-child { border-radius: var(--radius-sm); }
+
+  .step.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(34, 211, 166, 0.15);
+    background: var(--accent-dim);
+  }
+
+  .step.done {
+    border-color: rgba(52, 211, 153, 0.35);
+    background: rgba(52, 211, 153, 0.06);
+  }
+
+  .step-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--surface2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .step.active .step-num { background: var(--accent); color: #04120e; }
+  .step.done .step-num { background: rgba(52, 211, 153, 0.25); color: var(--success); }
+
+  .step-label { font-size: 12px; font-weight: 600; }
+
+  /* Dashboard widgets (select + results) */
+  .dash-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 280px;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .dash-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+
+  .dash-span-2 { grid-column: span 1; }
+
+  .dash-card-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    margin-bottom: 14px;
+    font-family: var(--font-mono);
+  }
+
+  .chart-host {
+    min-height: 200px;
+    overflow: hidden;
+  }
+
+  .chart-host svg { width: 100%; height: auto; display: block; }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 100px 1fr 36px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+
+  .bar-name {
+    color: var(--text2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+
+  .bar-track {
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.4s ease;
+  }
+
+  .bar-count {
+    text-align: right;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .overview-mini { display: flex; flex-direction: column; gap: 12px; }
+
+  .overview-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .overview-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+  .ov-label { font-size: 12px; color: var(--text2); }
+  .ov-val { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--accent); }
+
+  .donut-host {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 180px;
+  }
+
+  .donut-host svg { flex-shrink: 0; }
+
+  .donut-legend {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text2);
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  .results-chart-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 1100px) {
+    .dash-grid { grid-template-columns: 1fr; }
+    .results-chart-row { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 900px) {
+    .app-shell { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+    }
+    .sidebar-brand { margin-bottom: 0; padding-bottom: 0; border-bottom: none; flex: 1; min-width: 200px; }
+    .sidebar-section-label { display: none; }
+    .sidebar-steps {
+      flex-direction: row;
+      flex-wrap: wrap;
+      width: 100%;
+      gap: 6px;
+    }
+    .sidebar-step { flex: 1; min-width: 100px; justify-content: center; }
+    .sidebar-spacer { display: none; }
+    .sidebar-foot { width: 100%; border-top: 1px solid var(--sidebar-border); padding-top: 10px; }
   }
 
   .badge {
@@ -127,61 +834,6 @@
   .app-footer .app-version {
     color: var(--text2);
   }
-
-  /* Steps */
-  .steps {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    margin-bottom: 32px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 20px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    cursor: default;
-    transition: all 0.2s;
-    white-space: nowrap;
-  }
-
-  .step:first-child { border-radius: var(--radius) 0 0 var(--radius); }
-  .step:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
-
-  .step + .step { border-left: none; }
-
-  .step.active {
-    background: rgba(0, 212, 168, 0.08);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .step.done {
-    background: rgba(34, 197, 94, 0.06);
-    border-color: rgba(34, 197, 94, 0.3);
-    color: var(--success);
-  }
-
-  .step-num {
-    width: 22px; height: 22px;
-    border-radius: 50%;
-    background: var(--border2);
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    font-weight: 700;
-    flex-shrink: 0;
-  }
-
-  .step.active .step-num { background: var(--accent); color: var(--bg); }
-  .step.done .step-num { background: var(--success); color: var(--bg); }
-
-  .step-label { font-size: 13px; font-weight: 600; }
 
   /* Panels */
   .panel {
@@ -228,7 +880,7 @@
   .form-group.full { grid-column: 1 / -1; }
 
   label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text2);
     letter-spacing: 1px;
@@ -277,7 +929,7 @@
     gap: 8px;
     padding: 10px 20px;
     border-radius: var(--radius);
-    font-family: 'Syne', sans-serif;
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.3px;
@@ -338,6 +990,7 @@
 
   .conn-status.ok { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.3); color: var(--success); }
   .conn-status.err { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.3); color: var(--error); }
+  .conn-status.warn { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.3); color: var(--warn); }
   .conn-status.loading { color: var(--text2); }
 
   .dot {
@@ -388,30 +1041,31 @@
   .stats-bar {
     display: flex;
     flex-wrap: wrap;
-    gap: 2px;
+    gap: 12px;
     margin-bottom: 24px;
   }
 
   .stats-bar.migration-stats .stat-chip {
     flex: 1 1 82px;
     min-width: 78px;
-    max-width: 120px;
+    max-width: 140px;
   }
 
   .stat-chip {
     flex: 1;
-    background: var(--surface2);
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
   }
 
   .stat-num {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 22px;
     font-weight: 700;
     color: var(--accent);
@@ -856,23 +1510,269 @@
     .form-grid { grid-template-columns: 1fr; }
     .stats-bar { flex-wrap: wrap; }
     .stat-chip { min-width: calc(50% - 1px); flex: none; }
-    header { flex-direction: column; gap: 12px; align-items: flex-start; }
-    .steps { gap: 0; }
+    .topbar { flex-direction: column; align-items: flex-start; }
+    .steps { gap: 6px; }
   }
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <div class="logo">
-      <div class="logo-icon">🔄</div>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Primary">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo" aria-hidden="true">↻</div>
       <div>
-        <div class="logo-text">Morpheus <span>Snapshot</span></div>
-        <div class="logo-sub">Appliance Migration Tool</div>
+        <span class="sidebar-title">Morpheus</span>
+        <span class="sidebar-accent">Snapshot</span>
+        <span class="sidebar-tagline" id="sidebarTagline">Migration &amp; Fleet</span>
       </div>
     </div>
-  </header>
+    <div class="sidebar-mode-nav" role="tablist" aria-label="Application mode">
+      <button type="button" class="mode-btn active" id="modeBtnMigration" onclick="setAppMode('migration')">↔ Migration</button>
+      <button type="button" class="mode-btn" id="modeBtnFleet" onclick="setAppMode('fleet')">⊞ Fleet inventory</button>
+      <button type="button" class="mode-btn" id="modeBtnProfiles" onclick="setAppMode('profiles')">⚙ Appliance profiles</button>
+    </div>
+    <div class="sidebar-section-label" id="sidebarSectionLabel">Workflow</div>
+    <nav class="sidebar-steps" id="migrationSidebarSteps" aria-label="Steps">
+      <div class="sidebar-step active" data-step="1"><span class="sidx">1</span><span>Source</span></div>
+      <div class="sidebar-step" data-step="2"><span class="sidx">2</span><span>Discover</span></div>
+      <div class="sidebar-step" data-step="3"><span class="sidx">3</span><span>Select</span></div>
+      <div class="sidebar-step" data-step="4"><span class="sidx">4</span><span>Destination</span></div>
+      <div class="sidebar-step" data-step="5"><span class="sidx">5</span><span>Migrate</span></div>
+    </nav>
+    <nav class="sidebar-steps hidden" id="fleetSidebarSteps" aria-label="Fleet sections">
+      <div class="sidebar-step active" data-fleet-sub="inventory" onclick="setFleetSubView('inventory')"><span class="sidx">⊞</span><span>Inventory</span></div>
+      <div class="sidebar-step" data-fleet-sub="appliances" onclick="setFleetSubView('appliances')"><span class="sidx">◉</span><span>Appliances</span></div>
+      <div class="sidebar-step" data-fleet-sub="relations" onclick="setFleetSubView('relations')"><span class="sidx">🕸</span><span>Relations</span></div>
+      <div class="sidebar-step" data-fleet-sub="add" onclick="setFleetSubView('add')"><span class="sidx">+</span><span>Add appliances</span></div>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-foot">
+      <span id="appVersionSidebar" class="sidebar-version">v…</span>
+    </div>
+  </aside>
+  <div class="shell-main">
+    <header class="topbar">
+      <div>
+        <h1 class="page-title" id="pageTitle">Connect source appliance</h1>
+        <p class="page-sub" id="pageSubtitle">Morpheus URL, API token, and saved profiles</p>
+      </div>
+      <div class="topbar-right">
+        <span class="pill-step" id="stepPill">Step 1 / 5</span>
+      </div>
+    </header>
+    <div class="content-scroll">
 
+  <!-- FLEET: inventory + add appliances -->
+  <div id="view-fleet" class="hidden">
+    <div id="fleet-view-inventory">
+      <div class="panel">
+        <div class="panel-title">Fleet inventory</div>
+        <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
+          Saved appliance profiles (shared with Migration). Select rows with checkboxes, then <strong>Discover selected</strong>, or discover individually.
+        </p>
+        <div class="profiles-row" style="margin-bottom:16px;">
+          <span class="profiles-label">Profile:</span>
+          <select class="profile-select" id="fleetProfileSelect" onchange="loadProfile('fleet', this.value)">
+            <option value="">— select a profile —</option>
+          </select>
+          <button type="button" class="btn btn-secondary" style="padding:7px 12px;font-size:12px;" onclick="setFleetSubView('add')">+ Add appliance</button>
+        </div>
+        <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
+          <button type="button" class="btn btn-primary" id="btnDiscoverAll" onclick="fleetDiscoverAll()">🔍 Discover all profiles</button>
+          <button type="button" class="btn btn-secondary" onclick="fleetDiscoverSelected()">Discover selected</button>
+          <button type="button" class="btn btn-secondary" onclick="loadProfilesList()">↻ Refresh</button>
+        </div>
+        <div id="fleetDiscoverStatus" class="hidden conn-status loading"></div>
+        <table class="appliance-table" id="applianceTable">
+          <thead>
+            <tr>
+              <th style="width:40px;"><input type="checkbox" id="fleetInventorySelectAll" title="Select all" onchange="toggleFleetInventorySelectAll(this.checked)" /></th>
+              <th>Name</th><th>URL</th><th>Auth</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="applianceTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="fleet-view-appliances" class="hidden">
+      <div id="fleet-appliances-list">
+        <div class="panel">
+          <div class="panel-title">Discovered appliances</div>
+          <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
+            Click a row to open a comprehensive discovery report. Run discovery from <strong>Inventory</strong> to refresh.
+          </p>
+          <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
+            <button type="button" class="btn btn-secondary" onclick="setFleetSubView('inventory')">⊞ Go to Inventory</button>
+            <button type="button" class="btn btn-primary" onclick="fleetDiscoverAll()">🔍 Discover all</button>
+            <button type="button" class="btn btn-secondary" onclick="loadFleetDiscoveredFromServer()">↻ Load cached</button>
+          </div>
+          <table class="appliance-table" id="fleetAppliancesTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Health</th>
+                <th>Resources</th>
+                <th>Discovered</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="fleetAppliancesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="fleet-appliance-detail" class="hidden">
+        <div class="fleet-detail-back">
+          <button type="button" class="btn btn-secondary" onclick="fleetDetailBack()">← Back to appliances</button>
+          <button type="button" class="btn btn-secondary" id="fleetDetailRediscoverBtn" onclick="fleetDetailRediscover()">↻ Rediscover</button>
+        </div>
+        <div class="panel">
+          <div class="fleet-detail-header">
+            <div>
+              <h2 id="fleetDetailName">—</h2>
+              <div class="fleet-detail-meta" id="fleetDetailMeta"></div>
+            </div>
+            <div id="fleetDetailHealthPill"></div>
+          </div>
+          <div class="fleet-detail-stats" id="fleetDetailStats"></div>
+          <div id="fleetDetailErrors" class="hidden"></div>
+        </div>
+
+        <div class="panel fleet-detail-section">
+          <h3>License</h3>
+          <div id="fleetDetailLicenseKv" class="fleet-kv-grid"></div>
+          <div id="fleetDetailLicenseErr" class="hidden" style="color:var(--warn);font-size:13px;margin-bottom:10px;"></div>
+        </div>
+
+        <div class="panel fleet-detail-section">
+          <h3>Health</h3>
+          <div id="fleetDetailHealthKv" class="fleet-kv-grid"></div>
+          <div id="fleetDetailHealthErr" class="hidden" style="color:var(--warn);font-size:13px;margin-bottom:10px;"></div>
+        </div>
+
+        <div class="panel fleet-detail-section">
+          <h3>Discovered resources</h3>
+          <div class="fleet-detail-toolbar">
+            <input type="search" id="fleetDetailSearch" placeholder="Search by name, type, or ID…" oninput="renderFleetDetailDiscovery()" />
+          </div>
+          <div class="fleet-detail-filters" id="fleetDetailCategoryFilters"></div>
+          <div class="dash-grid" style="margin-bottom:16px;">
+            <div class="dash-card dash-span-2">
+              <div class="dash-card-title">Resources by category</div>
+              <div id="fleetDetailCategoryChart" class="chart-host"></div>
+            </div>
+            <div class="dash-card">
+              <div class="dash-card-title">Overview</div>
+              <div id="fleetDetailOverview" class="overview-mini"></div>
+            </div>
+          </div>
+          <div id="fleetDetailCategoryList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="fleet-view-add" class="hidden">
+      <div class="panel">
+        <div class="panel-title" id="profileFormTitle">Add appliance</div>
+        <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
+          Register a Morpheus appliance for fleet discovery and migration. Stored in PostgreSQL JSONB when configured, otherwise <code style="font-size:11px;">appliance-profiles.json</code>.
+        </p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Display name</label>
+            <input type="text" id="profileName" placeholder="Production Morpheus" />
+          </div>
+          <div class="form-group full">
+            <label>Appliance URL</label>
+            <input type="url" id="profileUrl" placeholder="https://morpheus.company.com" />
+          </div>
+          <div class="form-group full">
+            <label>Authentication</label>
+            <div style="display:flex;gap:16px;margin-top:6px;">
+              <label class="checkbox-label"><input type="radio" name="profileAuth" value="token" checked onchange="toggleProfileAuthFields()" /> API token</label>
+              <label class="checkbox-label"><input type="radio" name="profileAuth" value="password" onchange="toggleProfileAuthFields()" /> Username &amp; password</label>
+            </div>
+          </div>
+          <div class="form-group full" id="profileTokenGroup">
+            <label>API token</label>
+            <input type="password" id="profileToken" placeholder="Bearer token from Morpheus" />
+          </div>
+          <div class="form-group" id="profileUserGroup" style="display:none;">
+            <label>Username</label>
+            <input type="text" id="profileUsername" placeholder="admin" autocomplete="username" />
+          </div>
+          <div class="form-group" id="profilePassGroup" style="display:none;">
+            <label>Password</label>
+            <input type="password" id="profilePassword" placeholder="••••••••" autocomplete="current-password" />
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="profileSkipTLS" />
+              Skip TLS verification
+            </label>
+          </div>
+        </div>
+        <input type="hidden" id="profileEditId" value="" />
+        <div id="profileFormStatus" class="hidden"></div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-secondary" onclick="testProfileForm()">🔌 Test connection</button>
+          <button type="button" class="btn btn-primary" onclick="saveProfileForm()">💾 Save appliance</button>
+          <button type="button" class="btn btn-secondary hidden" id="btnProfileCancelEdit" onclick="cancelProfileForm()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fleet-view-relations" class="hidden">
+      <div class="panel">
+        <div class="panel-title">Relation view</div>
+        <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
+          Dependency graph for a discovered item. Click a discovered task in appliance detail to load relations.
+        </p>
+        <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
+          <button type="button" class="btn btn-secondary" onclick="setFleetSubView('appliances')">← Back to appliances</button>
+        </div>
+        <div id="fleetRelationsMount"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- APPLIANCE PROFILES: list all saved profiles -->
+  <div id="view-profiles" class="hidden">
+    <div class="panel">
+      <div class="panel-title">Appliance profiles</div>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
+        All saved Morpheus connections. Add or edit under <strong>Fleet inventory → Add appliances</strong>.
+      </p>
+      <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
+        <button type="button" class="btn btn-primary" onclick="setAppMode('fleet'); setFleetSubView('add'); resetProfileFormFields();">+ Add appliance</button>
+        <button type="button" class="btn btn-secondary" onclick="loadProfilesList()">↻ Refresh</button>
+      </div>
+      <table class="appliance-table">
+        <thead><tr><th>Name</th><th>URL</th><th>Auth</th><th></th></tr></thead>
+        <tbody id="profilesTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="panel" id="profilesSavedDiscoveriesPanel" style="margin-top:18px;display:none;">
+      <div class="panel-title">Saved discoveries</div>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55;">
+        Migration discovery snapshots stored in PostgreSQL. Load one to continue a migration, or delete snapshots you no longer need.
+      </p>
+      <div class="btn-row" style="margin-top:0;margin-bottom:12px;">
+        <button type="button" class="btn btn-secondary" onclick="loadDiscoveryHistory()">↻ Refresh list</button>
+      </div>
+      <table class="appliance-table">
+        <thead>
+          <tr><th>Timestamp</th><th>Appliance</th><th>Items</th><th>Source</th><th>Used by runs</th><th style="width:210px"></th></tr>
+        </thead>
+        <tbody id="profilesSavedDiscoveriesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="migrationShell">
   <!-- Steps -->
   <div class="steps">
     <div class="step active" id="step1">
@@ -906,9 +1806,24 @@
           <label>Appliance URL</label>
           <input type="url" id="srcUrl" placeholder="https://morpheus.company.com" />
         </div>
-        <div class="form-group full">
+        <div class="form-group full" id="srcAuthTypeRow">
+          <label>Authentication (when not using a saved profile)</label>
+          <div style="display:flex;gap:16px;margin-top:6px;">
+            <label class="checkbox-label"><input type="radio" name="srcAuth" value="token" checked onchange="toggleSideAuthFields('src')" /> API token</label>
+            <label class="checkbox-label"><input type="radio" name="srcAuth" value="password" onchange="toggleSideAuthFields('src')" /> Username &amp; password</label>
+          </div>
+        </div>
+        <div class="form-group full" id="srcTokenGroup">
           <label>API Token</label>
           <input type="password" id="srcToken" placeholder="••••••••••••••••••••••••••••••••" />
+        </div>
+        <div class="form-group" id="srcUserGroup" style="display:none;">
+          <label>Username</label>
+          <input type="text" id="srcUsername" placeholder="admin" autocomplete="username" />
+        </div>
+        <div class="form-group" id="srcPassGroup" style="display:none;">
+          <label>Password</label>
+          <input type="password" id="srcPassword" placeholder="••••••••" autocomplete="current-password" />
         </div>
         <div class="form-group">
           <label class="checkbox-label">
@@ -921,19 +1836,13 @@
       <div id="srcStatus" class="hidden"></div>
 
       <div class="profiles-row">
-        <span class="profiles-label">Saved:</span>
+        <span class="profiles-label">Appliance profile:</span>
         <select class="profile-select" id="srcProfileSelect" onchange="loadProfile('src', this.value)">
           <option value="">— select a profile —</option>
         </select>
         <button class="btn-icon" title="Save current as profile" onclick="promptSaveProfile('src')">💾</button>
         <button class="btn-icon del" title="Delete selected profile" onclick="deleteProfile('src')">🗑</button>
       </div>
-      <div id="srcSaveRow" class="save-name-row hidden">
-        <input type="text" id="srcProfileName" placeholder="Profile name (e.g. Prod Appliance)" />
-        <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="saveProfile('src')">Save</button>
-        <button class="btn btn-secondary" style="padding:7px 14px; font-size:12px;" onclick="cancelSave('src')">Cancel</button>
-      </div>
-
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="testConnection()">🔌 Test Connection</button>
         <button class="btn btn-primary" id="btnDiscover" onclick="startDiscovery()" disabled>
@@ -947,6 +1856,32 @@
         <button type="button" class="btn btn-primary" style="margin-left:8px;" onclick="restoreDiscoverySession()">Restore</button>
         <button type="button" class="btn btn-secondary" onclick="clearDiscoverySession()">Discard</button>
       </div>
+    </div>
+
+    <div class="panel" style="margin-top:18px;">
+      <div class="panel-title">Load saved discovery</div>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.55;max-width:720px;">
+        Use a <strong>discovery JSON</strong> you exported earlier from this tool to skip a new API discovery. The file’s source URL and TLS flag are filled in; add your <strong>API token</strong> above if you still need to call the source during migration. You can also start with <strong>Connect &amp; Discover</strong> instead.
+      </p>
+      <div class="btn-row" style="margin-top:0;">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('discoveryFileInputConnect').click()">📂 Load discovery JSON…</button>
+      </div>
+      <input type="file" id="discoveryFileInputConnect" accept=".json,application/json" style="display:none" onchange="discoveryLoadFromFile(event, 'connect')" />
+    </div>
+    <div class="panel" id="savedDiscoveriesPanel" style="margin-top:18px;display:none;">
+      <div class="panel-title">Saved discoveries</div>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55;">
+        Load a previous discovery from PostgreSQL, or delete old snapshots you no longer need.
+      </p>
+      <div class="btn-row" style="margin-top:0;margin-bottom:12px;">
+        <button type="button" class="btn btn-secondary" onclick="loadDiscoveryHistory()">↻ Refresh list</button>
+      </div>
+      <table class="appliance-table">
+        <thead>
+          <tr><th>Timestamp</th><th>Appliance</th><th>Items</th><th>Source</th><th>Used by runs</th><th style="width:210px"></th></tr>
+        </thead>
+        <tbody id="savedDiscoveriesBody"></tbody>
+      </table>
     </div>
 
     <div class="alert info">
@@ -980,7 +1915,7 @@
       </p>
       <label class="checkbox-label" style="display:block;margin-bottom:12px;">
         <input type="checkbox" id="persistDiscoverySession" onchange="onPersistDiscoveryToggle()" />
-        Remember discovery, source URL, token, and checkbox selections in this browser tab
+        Remember discovery and selections (PostgreSQL when <code>DATABASE_URL</code> is set, else this browser tab)
       </label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
         <label style="font-size:12px;color:var(--text2);">Subfolder to create inside the folder you pick:</label>
@@ -988,7 +1923,22 @@
         <button type="button" class="btn btn-secondary" onclick="discoverySaveToFolder()">📁 Save to folder…</button>
         <button type="button" class="btn btn-secondary" onclick="discoveryDownloadJSON()">⬇ Download JSON</button>
         <button type="button" class="btn btn-secondary" onclick="document.getElementById('discoveryFileInput').click()">📂 Load from file…</button>
-        <input type="file" id="discoveryFileInput" accept=".json,application/json" style="display:none" onchange="discoveryLoadFromFile(event)" />
+        <input type="file" id="discoveryFileInput" accept=".json,application/json" style="display:none" onchange="discoveryLoadFromFile(event, 'select')" />
+      </div>
+    </div>
+
+    <div class="dash-grid" id="selectDashboard">
+      <div class="dash-card dash-span-2">
+        <div class="dash-card-title">Resources by category</div>
+        <div id="categoryChartMount" class="chart-host"></div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title">Overview</div>
+        <div id="overviewMini" class="overview-mini"></div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-title">Selection</div>
+        <div id="selectionDonutMount" class="donut-host"></div>
       </div>
     </div>
 
@@ -1040,8 +1990,23 @@
           <input type="url" id="dstUrl" placeholder="https://morpheus-new.company.com" />
         </div>
         <div class="form-group full">
+          <label>Authentication (when not using a saved profile)</label>
+          <div style="display:flex;gap:16px;margin-top:6px;">
+            <label class="checkbox-label"><input type="radio" name="dstAuth" value="token" checked onchange="toggleSideAuthFields('dst')" /> API token</label>
+            <label class="checkbox-label"><input type="radio" name="dstAuth" value="password" onchange="toggleSideAuthFields('dst')" /> Username &amp; password</label>
+          </div>
+        </div>
+        <div class="form-group full" id="dstTokenGroup">
           <label>API Token</label>
           <input type="password" id="dstToken" placeholder="••••••••••••••••••••••••••••••••" />
+        </div>
+        <div class="form-group" id="dstUserGroup" style="display:none;">
+          <label>Username</label>
+          <input type="text" id="dstUsername" placeholder="admin" autocomplete="username" />
+        </div>
+        <div class="form-group" id="dstPassGroup" style="display:none;">
+          <label>Password</label>
+          <input type="password" id="dstPassword" placeholder="••••••••" autocomplete="current-password" />
         </div>
         <div class="form-group">
           <label class="checkbox-label">
@@ -1060,19 +2025,13 @@
       <div id="dstStatus" class="hidden"></div>
 
       <div class="profiles-row">
-        <span class="profiles-label">Saved:</span>
+        <span class="profiles-label">Appliance profile:</span>
         <select class="profile-select" id="dstProfileSelect" onchange="loadProfile('dst', this.value)">
           <option value="">— select a profile —</option>
         </select>
         <button class="btn-icon" title="Save current as profile" onclick="promptSaveProfile('dst')">💾</button>
         <button class="btn-icon del" title="Delete selected profile" onclick="deleteProfile('dst')">🗑</button>
       </div>
-      <div id="dstSaveRow" class="save-name-row hidden">
-        <input type="text" id="dstProfileName" placeholder="Profile name (e.g. Dev Appliance)" />
-        <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="saveProfile('dst')">Save</button>
-        <button class="btn btn-secondary" style="padding:7px 14px; font-size:12px;" onclick="cancelSave('dst')">Cancel</button>
-      </div>
-
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="testDestConnection()">🔌 Test Connection</button>
         <button class="btn btn-secondary" onclick="goBack()">← Back</button>
@@ -1084,6 +2043,7 @@
 
     <div class="panel">
       <div class="panel-title">Migration Preview</div>
+      <div id="autoIncludePreview" style="margin-bottom:14px;"></div>
       <div id="previewList"></div>
     </div>
   </div>
@@ -1103,6 +2063,18 @@
       </div>
 
       <div id="migrationDone" class="hidden">
+        <div class="results-chart-row">
+          <div class="dash-card">
+            <div class="dash-card-title">Outcome distribution</div>
+            <div id="resultsOutcomeChart" class="chart-host"></div>
+          </div>
+          <div class="dash-card">
+            <div class="dash-card-title">Run summary</div>
+            <div id="resultsSummaryMini" class="overview-mini"></div>
+          </div>
+        </div>
+        <div id="migrationDiscoveryContext" class="overview-mini" style="margin-bottom:14px;"></div>
+
         <div class="stats-bar migration-stats" style="margin-bottom:16px;">
           <div class="stat-chip">
             <div class="stat-num" id="resSuccess" style="color: var(--success);">0</div>
@@ -1154,7 +2126,11 @@
     </div>
   </div>
 
-</div><!-- .app -->
+  </div><!-- #migrationShell -->
+
+    </div>
+  </div>
+</div>
 
 <footer class="app-footer" role="contentinfo" aria-label="Application version">
   <span id="appVersion" class="app-version">v…</span>
@@ -1163,12 +2139,25 @@
 <script>
 // ─── State ───────────────────────────────────────────────────────────────────
 let state = {
-  srcUrl: '', srcToken: '', srcSkipTLS: false,
+  srcUrl: '', srcToken: '', srcSkipTLS: false, srcProfileId: '',
   dstUrl: '', dstToken: '', dstSkipTLS: false,
+  currentDiscoveryId: 0,
+  currentDiscoveryTime: '',
   discovery: null,
   selected: new Set(),        // "category:id" keys
   allResults: [],
-  activeFilter: 'ALL'
+  activeFilter: 'ALL',
+  appMode: 'migration',
+  fleetSnapshots: {},  // profileId -> snapshot
+  fleetDiscoveryErrors: {},  // profileId -> { name, url, message }
+  fleetSubView: 'inventory',
+  fleetDetailProfileId: null,
+  fleetDetailFilter: 'ALL',
+  fleetInventorySelected: new Set(),
+  fleetRelationContext: null,
+  storagePostgres: false,
+  discoveryHistory: [],
+  serverSessionId: localStorage.getItem('morpheus_server_session_id') || ''
 };
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
@@ -1188,26 +2177,1926 @@ function setStep(n) {
     el.classList.remove('active','done');
     if (i < n) el.classList.add('done');
     else if (i === n) el.classList.add('active');
+    const side = document.querySelector('.sidebar-step[data-step="'+i+'"]');
+    if (side) {
+      side.classList.remove('active','done');
+      if (i < n) side.classList.add('done');
+      else if (i === n) side.classList.add('active');
+    }
+  }
+  const pill = document.getElementById('stepPill');
+  if (pill) pill.textContent = 'Step ' + n + ' / 5';
+}
+
+// ─── App mode: Migration vs Fleet ───────────────────────────────────────────
+const FLEET_SUB_META = {
+  inventory: ['Fleet inventory', 'Saved profiles — run discovery against your appliances'],
+  appliances: ['Appliances', 'All discovered appliances — resources, license, and health'],
+  relations: ['Relations', 'View associations for discovered items (tasks, workflows, integrations, etc.)'],
+  add: ['Add appliances', 'Register Morpheus URL and credentials for fleet and migration']
+};
+const PROFILES_META = ['Appliance profiles', 'All saved connections — add or edit under Fleet → Add appliances'];
+
+function setFleetSubView(sub) {
+  state.fleetSubView = sub;
+  const inv = document.getElementById('fleet-view-inventory');
+  const appl = document.getElementById('fleet-view-appliances');
+  const rel = document.getElementById('fleet-view-relations');
+  const add = document.getElementById('fleet-view-add');
+  if (inv) inv.classList.toggle('hidden', sub !== 'inventory');
+  if (appl) appl.classList.toggle('hidden', sub !== 'appliances');
+  if (rel) rel.classList.toggle('hidden', sub !== 'relations');
+  if (add) add.classList.toggle('hidden', sub !== 'add');
+  document.querySelectorAll('#fleetSidebarSteps .sidebar-step').forEach(el => {
+    el.classList.toggle('active', el.dataset.fleetSub === sub);
+  });
+  if (state.appMode === 'fleet') {
+    const meta = FLEET_SUB_META[sub] || FLEET_SUB_META.inventory;
+    document.getElementById('pageTitle').textContent = meta[0];
+    document.getElementById('pageSubtitle').textContent = meta[1];
+  }
+  if (sub === 'appliances') {
+    closeFleetDetailView(false);
+    if (state.storagePostgres && !fleetDiscoveryEntries().length) {
+      loadFleetDiscoveredFromServer(true);
+    }
+    renderDiscoveredAppliancesTable();
+  } else if (sub === 'relations') {
+    renderFleetRelationsView();
   }
 }
 
+function setAppMode(mode) {
+  state.appMode = mode;
+  const mig = document.getElementById('migrationShell');
+  const fleet = document.getElementById('view-fleet');
+  const profiles = document.getElementById('view-profiles');
+  const pill = document.getElementById('stepPill');
+  const migSteps = document.getElementById('migrationSidebarSteps');
+  const fleetSteps = document.getElementById('fleetSidebarSteps');
+  document.getElementById('modeBtnMigration').classList.toggle('active', mode === 'migration');
+  document.getElementById('modeBtnFleet').classList.toggle('active', mode === 'fleet');
+  document.getElementById('modeBtnProfiles').classList.toggle('active', mode === 'profiles');
+  mig.classList.add('hidden');
+  fleet.classList.add('hidden');
+  profiles.classList.add('hidden');
+  if (fleetSteps) fleetSteps.classList.add('hidden');
+  if (migSteps) migSteps.classList.add('hidden');
+  if (mode === 'fleet') {
+    fleet.classList.remove('hidden');
+    if (pill) pill.classList.add('hidden');
+    if (fleetSteps) fleetSteps.classList.remove('hidden');
+    document.getElementById('sidebarSectionLabel').textContent = 'Fleet';
+    loadProfilesList();
+    setFleetSubView(state.fleetSubView || 'inventory');
+  } else if (mode === 'profiles') {
+    profiles.classList.remove('hidden');
+    if (pill) pill.classList.add('hidden');
+    document.getElementById('sidebarSectionLabel').textContent = 'Profiles';
+    document.getElementById('pageTitle').textContent = PROFILES_META[0];
+    document.getElementById('pageSubtitle').textContent = PROFILES_META[1];
+    loadProfilesList();
+    renderProfilesManageTable();
+    if (state.storagePostgres) loadDiscoveryHistory();
+  } else {
+    mig.classList.remove('hidden');
+    if (pill) pill.classList.remove('hidden');
+    if (migSteps) migSteps.classList.remove('hidden');
+    document.getElementById('sidebarSectionLabel').textContent = 'Workflow';
+    showView('view-connect');
+    setStep(1);
+    loadProfilesList();
+  }
+}
+
+// ─── Appliance profiles (shared) ─────────────────────────────────────────────
+let profilesCache = [];
+
+function profileAuthLabel(p) {
+  if (p.authMethod === 'password') return 'Password' + (p.username ? ' (' + p.username + ')' : '');
+  return 'API token';
+}
+
+function sideAuthType(side) {
+  const r = document.querySelector('input[name="' + side + 'Auth"]:checked');
+  return r ? r.value : 'token';
+}
+
+function toggleSideAuthFields(side) {
+  const auth = sideAuthType(side);
+  const tokenG = document.getElementById(side + 'TokenGroup');
+  const userG = document.getElementById(side + 'UserGroup');
+  const passG = document.getElementById(side + 'PassGroup');
+  if (tokenG) tokenG.style.display = auth === 'token' ? '' : 'none';
+  if (userG) userG.style.display = auth === 'password' ? '' : 'none';
+  if (passG) passG.style.display = auth === 'password' ? '' : 'none';
+}
+
+function connPayloadFromSide(side) {
+  const profileId = (document.getElementById(side + 'ProfileSelect') || {}).value || '';
+  if (profileId) return { profileId };
+  const url = document.getElementById(side + 'Url').value.trim();
+  const skipTls = document.getElementById(side + 'SkipTLS').checked;
+  if (sideAuthType(side) === 'password') {
+    const username = document.getElementById(side + 'Username').value.trim();
+    const password = document.getElementById(side + 'Password').value;
+    if (!url || !username || !password) return null;
+    return { url, username, password, skipTls };
+  }
+  const token = document.getElementById(side + 'Token').value.trim();
+  if (!url || !token) return null;
+  return { url, token, skipTls };
+}
+
+function migrationApplFromSide(side) {
+  const profileId = (document.getElementById(side + 'ProfileSelect') || {}).value || '';
+  if (profileId) return { profileId };
+  const url = document.getElementById(side + 'Url').value.trim();
+  const skipTls = document.getElementById(side + 'SkipTLS').checked;
+  if (sideAuthType(side) === 'password') {
+    return {
+      url,
+      username: document.getElementById(side + 'Username').value.trim(),
+      password: document.getElementById(side + 'Password').value,
+      skipTls
+    };
+  }
+  return { url, token: document.getElementById(side + 'Token').value.trim(), skipTls };
+}
+
+function requireConnPayload(side) {
+  const payload = connPayloadFromSide(side);
+  if (payload) return payload;
+  const hasProfile = !!(document.getElementById(side + 'ProfileSelect') || {}).value;
+  if (hasProfile) return { profileId: document.getElementById(side + 'ProfileSelect').value };
+  if (sideAuthType(side) === 'password') {
+    alert('Select an appliance profile, or enter URL, username, and password.');
+  } else {
+    alert('Select an appliance profile, or enter URL and API token.');
+  }
+  return null;
+}
+
+async function loadProfilesList() {
+  try {
+    const res = await api('/api/profiles');
+    profilesCache = res.profiles || [];
+    refreshProfileDropdowns();
+    renderFleetProfileTable();
+    if (state.appMode === 'profiles') renderProfilesManageTable();
+  } catch (e) {
+    console.warn('profiles list:', e.message);
+  }
+}
+
+function refreshProfileDropdowns() {
+  ['src', 'dst', 'fleet'].forEach(side => {
+    const sel = document.getElementById(side + 'ProfileSelect');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— select a profile —</option>';
+    profilesCache.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    if (current && profilesCache.some(p => p.id === current)) sel.value = current;
+  });
+}
+
+function loadProfile(side, id) {
+  if (!id) return;
+  if (side === 'fleet') return;
+  const p = profilesCache.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById(side + 'Url').value = p.url;
+  document.getElementById(side + 'SkipTLS').checked = !!p.skipTls;
+  document.getElementById(side + 'Password').value = '';
+  document.getElementById(side + 'Token').value = '';
+  const authVal = p.authMethod === 'password' ? 'password' : 'token';
+  const radio = document.querySelector('input[name="' + side + 'Auth"][value="' + authVal + '"]');
+  if (radio) radio.checked = true;
+  if (p.authMethod === 'password') {
+    document.getElementById(side + 'Username').value = p.username || '';
+  }
+  toggleSideAuthFields(side);
+  if (side === 'src') document.getElementById('btnDiscover').disabled = false;
+}
+
+function pruneFleetInventorySelection() {
+  const valid = new Set(profilesCache.map(p => p.id));
+  state.fleetInventorySelected.forEach(id => {
+    if (!valid.has(id)) state.fleetInventorySelected.delete(id);
+  });
+}
+
+function toggleFleetInventorySelect(id, checked) {
+  if (checked) state.fleetInventorySelected.add(id);
+  else state.fleetInventorySelected.delete(id);
+  updateFleetInventorySelectAllCheckbox();
+}
+
+function toggleFleetInventorySelectAll(checked) {
+  if (checked) {
+    profilesCache.forEach(p => state.fleetInventorySelected.add(p.id));
+  } else {
+    state.fleetInventorySelected.clear();
+  }
+  renderFleetProfileTable();
+}
+
+function updateFleetInventorySelectAllCheckbox() {
+  const el = document.getElementById('fleetInventorySelectAll');
+  if (!el || !profilesCache.length) return;
+  const n = profilesCache.length;
+  const s = state.fleetInventorySelected.size;
+  el.checked = s === n;
+  el.indeterminate = s > 0 && s < n;
+}
+
+function renderFleetProfileTable() {
+  const tbody = document.getElementById('applianceTableBody');
+  if (!tbody) return;
+  pruneFleetInventorySelection();
+  if (!profilesCache.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text3);padding:20px;">No appliances yet. Use <strong>Add appliances</strong> in the sidebar to register one.</td></tr>';
+    updateFleetInventorySelectAllCheckbox();
+    return;
+  }
+  tbody.innerHTML = profilesCache.map(p => {
+    const checked = state.fleetInventorySelected.has(p.id);
+    return `<tr>
+      <td><input type="checkbox" class="fleet-inv-check" ${checked ? 'checked' : ''} onchange="toggleFleetInventorySelect('${p.id}', this.checked)" aria-label="Select ${escapeHtml(p.name)}" /></td>
+      <td><strong>${escapeHtml(p.name)}</strong></td>
+      <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(p.url)}</td>
+      <td>${escapeHtml(profileAuthLabel(p))}</td>
+      <td style="white-space:nowrap;">
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="fleetDiscoverOne('${p.id}')">Discover</button>
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="editProfile('${p.id}')">Edit</button>
+      </td>
+    </tr>`;
+  }).join('');
+  updateFleetInventorySelectAllCheckbox();
+}
+
+function renderProfilesManageTable() {
+  const tbody = document.getElementById('profilesTableBody');
+  if (!tbody) return;
+  if (!profilesCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3);padding:20px;">No profiles saved yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = profilesCache.map(p => `
+    <tr>
+      <td><strong>${escapeHtml(p.name)}</strong></td>
+      <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(p.url)}</td>
+      <td>${escapeHtml(profileAuthLabel(p))}</td>
+      <td style="white-space:nowrap;">
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="editProfile('${p.id}')">Edit</button>
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="deleteProfileById('${p.id}')">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+function profileFormAuthType() {
+  const r = document.querySelector('input[name="profileAuth"]:checked');
+  return r ? r.value : 'token';
+}
+
+function toggleProfileAuthFields() {
+  const auth = profileFormAuthType();
+  document.getElementById('profileTokenGroup').style.display = auth === 'token' ? '' : 'none';
+  document.getElementById('profileUserGroup').style.display = auth === 'password' ? '' : 'none';
+  document.getElementById('profilePassGroup').style.display = auth === 'password' ? '' : 'none';
+}
+
+function profileFormPayload() {
+  const auth = profileFormAuthType();
+  const base = {
+    id: document.getElementById('profileEditId').value.trim(),
+    name: document.getElementById('profileName').value.trim(),
+    url: document.getElementById('profileUrl').value.trim(),
+    skipTls: document.getElementById('profileSkipTLS').checked
+  };
+  if (auth === 'password') {
+    base.username = document.getElementById('profileUsername').value.trim();
+    base.password = document.getElementById('profilePassword').value;
+    base.token = '';
+  } else {
+    base.token = document.getElementById('profileToken').value.trim();
+    base.username = '';
+    base.password = '';
+  }
+  return base;
+}
+
+function profileActionPayload() {
+  const p = profileFormPayload();
+  const body = { url: p.url, skipTls: p.skipTls };
+  if (p.id) body.profileId = p.id;
+  if (profileFormAuthType() === 'password') {
+    body.username = p.username;
+    body.password = p.password;
+  } else {
+    body.token = p.token;
+  }
+  return body;
+}
+
+function setProfileFormStatus(type, msg) {
+  const el = document.getElementById('profileFormStatus');
+  el.className = 'conn-status ' + type;
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="dot ' + (type === 'loading' ? 'pulse' : '') + '"></div><span>' + escapeHtml(msg) + '</span>';
+}
+
+async function testProfileForm() {
+  const p = profileFormPayload();
+  if (!p.url) return alert('Enter appliance URL.');
+  if (profileFormAuthType() === 'password' && !p.id && (!p.username || !p.password)) {
+    return alert('Username and password required.');
+  }
+  if (profileFormAuthType() === 'token' && !p.id && !p.token) {
+    return alert('API token required.');
+  }
+  setProfileFormStatus('loading', 'Testing connection…');
+  try {
+    const res = await api('/api/profiles/test', 'POST', profileActionPayload());
+    setProfileFormStatus('ok', 'Connected as: ' + res.user);
+  } catch (e) {
+    setProfileFormStatus('err', e.message);
+  }
+}
+
+async function saveProfileForm() {
+  const p = profileFormPayload();
+  if (!p.name || !p.url) return alert('Name and URL are required.');
+  if (!p.id && profileFormAuthType() === 'token' && !p.token) {
+    return alert('API token required for new profiles.');
+  }
+  if (!p.id && profileFormAuthType() === 'password' && (!p.username || !p.password)) {
+    return alert('Username and password required for new profiles.');
+  }
+  try {
+    await api('/api/profiles/save', 'POST', p);
+    document.getElementById('profilePassword').value = '';
+    document.getElementById('profileToken').value = '';
+    resetProfileFormFields();
+    await loadProfilesList();
+    setProfileFormStatus('ok', 'Appliance saved.');
+    if (state.appMode === 'fleet') setFleetSubView('appliances');
+  } catch (e) {
+    setProfileFormStatus('err', e.message);
+  }
+}
+
+function editProfile(id) {
+  const p = profilesCache.find(x => x.id === id);
+  if (!p) return;
+  if (state.appMode !== 'fleet') setAppMode('fleet');
+  setFleetSubView('add');
+  document.getElementById('profileEditId').value = p.id;
+  document.getElementById('profileName').value = p.name;
+  document.getElementById('profileUrl').value = p.url;
+  document.getElementById('profileSkipTLS').checked = !!p.skipTls;
+  document.getElementById('profilePassword').value = '';
+  document.getElementById('profileToken').value = '';
+  const authVal = p.authMethod === 'password' ? 'password' : 'token';
+  const radio = document.querySelector('input[name="profileAuth"][value="' + authVal + '"]');
+  if (radio) radio.checked = true;
+  document.getElementById('profileUsername').value = p.username || '';
+  toggleProfileAuthFields();
+  document.getElementById('profileFormTitle').textContent = 'Edit appliance';
+  document.getElementById('btnProfileCancelEdit').classList.remove('hidden');
+  document.getElementById('profileName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function resetProfileFormFields() {
+  document.getElementById('profileEditId').value = '';
+  document.getElementById('profileName').value = '';
+  document.getElementById('profileUrl').value = '';
+  document.getElementById('profileUsername').value = '';
+  document.getElementById('profilePassword').value = '';
+  document.getElementById('profileToken').value = '';
+  document.getElementById('profileSkipTLS').checked = false;
+  document.querySelector('input[name="profileAuth"][value="token"]').checked = true;
+  toggleProfileAuthFields();
+  document.getElementById('profileFormTitle').textContent = 'Add appliance';
+  document.getElementById('btnProfileCancelEdit').classList.add('hidden');
+  document.getElementById('profileFormStatus').classList.add('hidden');
+}
+
+function cancelProfileForm() {
+  resetProfileFormFields();
+  if (state.appMode === 'fleet' && state.fleetSubView === 'add') {
+    setFleetSubView('inventory');
+  }
+}
+
+async function deleteProfileById(id) {
+  const p = profilesCache.find(x => x.id === id);
+  if (!confirm('Delete profile "' + (p ? p.name : id) + '"?')) return;
+  try {
+    await api('/api/profiles/delete?id=' + encodeURIComponent(id), 'DELETE');
+    delete state.fleetSnapshots[id];
+    delete state.fleetDiscoveryErrors[id];
+    await loadProfilesList();
+    renderDiscoveredAppliancesList();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function fleetDiscoverOne(id) {
+  const status = document.getElementById('fleetDiscoverStatus');
+  status.classList.remove('hidden', 'ok', 'err', 'warn');
+  status.classList.add('loading');
+  status.innerHTML = '<div class="dot pulse"></div><span>Discovering…</span>';
+  try {
+    const snap = await api('/api/profiles/discover', 'POST', { profileId: id });
+    state.fleetSnapshots[id] = snap;
+    delete state.fleetDiscoveryErrors[id];
+    renderDiscoveredAppliancesList();
+    if (state.fleetDetailProfileId === id) renderFleetApplianceDetail(id);
+    status.classList.remove('loading');
+    status.classList.add('ok');
+    status.innerHTML = '<div class="dot"></div><span>Discovery complete.</span>';
+    if (state.fleetSubView !== 'appliances') setFleetSubView('appliances');
+  } catch (e) {
+    state.fleetDiscoveryErrors[id] = {
+      name: (profilesCache.find(x => x.id === id) || {}).name || id,
+      url: (profilesCache.find(x => x.id === id) || {}).url || '',
+      message: e.message
+    };
+    delete state.fleetSnapshots[id];
+    renderDiscoveredAppliancesList();
+    if (state.fleetDetailProfileId === id) renderFleetApplianceDetail(id);
+    status.classList.remove('loading');
+    status.classList.add('err');
+    status.innerHTML = '<div class="dot"></div><span>' + escapeHtml(e.message) + '</span>';
+  }
+}
+
+async function fleetDiscoverSelected() {
+  let ids = [...state.fleetInventorySelected];
+  if (!ids.length) {
+    const dropdown = (document.getElementById('fleetProfileSelect') || {}).value;
+    if (dropdown) ids = [dropdown];
+    else return alert('Select one or more appliances using the checkboxes in the table.');
+  }
+
+  const status = document.getElementById('fleetDiscoverStatus');
+  status.classList.remove('hidden', 'ok', 'err', 'warn');
+  status.classList.add('loading');
+
+  let ok = 0;
+  let fail = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const p = profilesCache.find(x => x.id === id);
+    const label = p ? p.name : id;
+    status.innerHTML = '<div class="dot pulse"></div><span>Discovering ' + escapeHtml(label) + ' (' + (i + 1) + ' of ' + ids.length + ')…</span>';
+    try {
+      const snap = await api('/api/profiles/discover', 'POST', { profileId: id });
+      state.fleetSnapshots[id] = snap;
+      delete state.fleetDiscoveryErrors[id];
+      ok++;
+    } catch (e) {
+      delete state.fleetSnapshots[id];
+      state.fleetDiscoveryErrors[id] = {
+        name: p ? p.name : id,
+        url: p ? p.url : '',
+        message: e.message
+      };
+      fail++;
+    }
+  }
+
+  renderDiscoveredAppliancesList();
+  setFleetSubView('appliances');
+  status.classList.remove('loading');
+  status.classList.add(fail && !ok ? 'err' : fail ? 'warn' : 'ok');
+  status.innerHTML = '<div class="dot"></div><span>Finished: ' + ok + ' ok' + (fail ? ', ' + fail + ' failed' : '') + '.</span>';
+}
+
+async function fleetDiscoverAll() {
+  if (!profilesCache.length) return alert('Add at least one appliance profile first.');
+  const btn = document.getElementById('btnDiscoverAll');
+  btn.disabled = true;
+  const status = document.getElementById('fleetDiscoverStatus');
+  status.classList.remove('hidden', 'ok', 'err', 'warn');
+  status.classList.add('loading');
+  status.innerHTML = '<div class="dot pulse"></div><span>Discovering all profiles…</span>';
+  try {
+    const res = await api('/api/profiles/discover-all', 'POST', {});
+    (res.results || []).forEach(recordFleetDiscoveryResult);
+    renderDiscoveredAppliancesList();
+    setFleetSubView('appliances');
+    const ok = (res.results || []).filter(r => r.status === 'ok').length;
+    const fail = (res.results || []).length - ok;
+    status.classList.remove('loading');
+    status.classList.add(fail ? 'warn' : 'ok');
+    status.innerHTML = '<div class="dot"></div><span>Finished: ' + ok + ' ok' + (fail ? ', ' + fail + ' failed' : '') + '.</span>';
+  } catch (e) {
+    status.classList.remove('loading');
+    status.classList.add('err');
+    status.innerHTML = '<div class="dot"></div><span>' + escapeHtml(e.message) + '</span>';
+  }
+  btn.disabled = false;
+}
+
+function fleetHealthSummary(snap) {
+  if (snap.healthError) return { label: 'Health unavailable', cls: 'warn' };
+  if (!snap.health) return { label: 'No health data', cls: 'warn' };
+  try {
+    const h = typeof snap.health === 'string' ? JSON.parse(snap.health) : snap.health;
+    const status = (h.status || h.health || h.overallStatus || '').toString().toLowerCase();
+    if (status.includes('ok') || status.includes('good') || status === 'green') return { label: 'Healthy', cls: 'ok' };
+    if (status.includes('warn') || status.includes('yellow')) return { label: 'Warning', cls: 'warn' };
+    return { label: status || 'Health reported', cls: 'ok' };
+  } catch (_) {
+    return { label: 'Health data loaded', cls: 'ok' };
+  }
+}
+
+function recordFleetDiscoveryResult(r) {
+  const id = r.profileId;
+  if (!id) return;
+  if (r.status === 'ok' && r.snapshot) {
+    state.fleetSnapshots[id] = r.snapshot;
+    delete state.fleetDiscoveryErrors[id];
+  } else {
+    delete state.fleetSnapshots[id];
+    state.fleetDiscoveryErrors[id] = {
+      name: r.name || id,
+      url: r.url || '',
+      message: r.message || 'Discovery failed'
+    };
+  }
+}
+
+function fleetDiscoveryEntries() {
+  const ids = new Set([
+    ...Object.keys(state.fleetSnapshots),
+    ...Object.keys(state.fleetDiscoveryErrors)
+  ]);
+  return [...ids].map(id => {
+    const p = profilesCache.find(x => x.id === id);
+    const snap = state.fleetSnapshots[id];
+    const err = state.fleetDiscoveryErrors[id];
+    if (snap) {
+      return { id, name: p ? p.name : id, url: snap.url || (p && p.url), status: 'ok', snap };
+    }
+    return {
+      id,
+      name: err ? err.name : (p ? p.name : id),
+      url: err ? err.url : (p && p.url),
+      status: 'error',
+      message: err ? err.message : 'Discovery failed'
+    };
+  });
+}
+
+function renderDiscoveredAppliancesTable() {
+  const tbody = document.getElementById('fleetAppliancesTableBody');
+  if (!tbody) return;
+  const entries = fleetDiscoveryEntries();
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text3);padding:20px;">No discovered appliances yet. Use <strong>Inventory</strong> to run discovery.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = entries.map(e => {
+    if (e.status === 'error') {
+      return `<tr class="clickable-row" onclick="openFleetApplianceDetail('${e.id}')" title="View details">
+        <td><strong>${escapeHtml(e.name)}</strong></td>
+        <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(e.url || '—')}</td>
+        <td><span class="health-pill err">Failed</span></td>
+        <td>—</td>
+        <td>—</td>
+        <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+          <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="fleetDiscoverOne('${e.id}')">Retry</button>
+        </td>
+      </tr>`;
+    }
+    const snap = e.snap;
+    const health = fleetHealthSummary(snap);
+    const disc = snap.discovery || {};
+    const at = snap.discoveredAt ? new Date(snap.discoveredAt).toLocaleString() : '—';
+    return `<tr class="clickable-row" onclick="openFleetApplianceDetail('${e.id}')" title="View full discovery report">
+      <td><strong>${escapeHtml(e.name)}</strong></td>
+      <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(snap.url || e.url || '')}</td>
+      <td><span class="health-pill ${health.cls}">${escapeHtml(health.label)}</span></td>
+      <td>${disc.total != null ? disc.total : 0} <span style="color:var(--text3);font-size:11px;">(${(disc.categories || []).length} cat.)</span></td>
+      <td style="font-size:11px;color:var(--text2);">${escapeHtml(at)}</td>
+      <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="openFleetApplianceDetail('${e.id}')">View</button>
+        <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="fleetDiscoverOne('${e.id}')">↻</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function closeFleetDetailView(renderList) {
+  state.fleetDetailProfileId = null;
+  const list = document.getElementById('fleet-appliances-list');
+  const detail = document.getElementById('fleet-appliance-detail');
+  if (list) list.classList.remove('hidden');
+  if (detail) detail.classList.add('hidden');
+  if (renderList !== false) renderDiscoveredAppliancesTable();
+  if (state.appMode === 'fleet' && state.fleetSubView === 'appliances') {
+    const meta = FLEET_SUB_META.appliances;
+    document.getElementById('pageTitle').textContent = meta[0];
+    document.getElementById('pageSubtitle').textContent = meta[1];
+  }
+}
+
+function fleetDetailBack() {
+  closeFleetDetailView(true);
+}
+
+function openFleetApplianceDetail(profileId) {
+  if (!profileId) return;
+  state.fleetDetailProfileId = profileId;
+  state.fleetDetailFilter = 'ALL';
+  const search = document.getElementById('fleetDetailSearch');
+  if (search) search.value = '';
+  document.getElementById('fleet-appliances-list').classList.add('hidden');
+  document.getElementById('fleet-appliance-detail').classList.remove('hidden');
+  const btn = document.getElementById('fleetDetailRediscoverBtn');
+  if (btn) btn.setAttribute('data-profile-id', profileId);
+  renderFleetApplianceDetail(profileId);
+  const p = profilesCache.find(x => x.id === profileId);
+  const name = p ? p.name : profileId;
+  document.getElementById('pageTitle').textContent = name;
+  document.getElementById('pageSubtitle').textContent = 'Appliance discovery report';
+  document.querySelector('.content-scroll').scrollTop = 0;
+}
+
+async function fleetDetailRediscover() {
+  const id = state.fleetDetailProfileId;
+  if (!id) return;
+  await fleetDiscoverOne(id);
+  if (state.fleetSnapshots[id]) renderFleetApplianceDetail(id);
+}
+
+function parseJsonObject(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch (_) { return null; }
+}
+
+function flattenObjectForKv(obj, prefix, out, depth) {
+  if (!obj || depth > 2) return;
+  Object.entries(obj).forEach(([k, v]) => {
+    const key = prefix ? prefix + '.' + k : k;
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      flattenObjectForKv(v, key, out, depth + 1);
+    } else if (v != null && String(v).trim() !== '') {
+      out.push({ key, val: Array.isArray(v) ? JSON.stringify(v) : String(v) });
+    }
+  });
+}
+
+function renderFleetKvGrid(hostId, obj, labelMap) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const rows = [];
+  flattenObjectForKv(obj, '', rows, 0);
+  const prefer = labelMap || [];
+  const ordered = [];
+  prefer.forEach(k => {
+    const row = rows.find(r => r.key === k || r.key.endsWith('.' + k));
+    if (row) ordered.push(row);
+  });
+  rows.forEach(r => {
+    if (!ordered.includes(r)) ordered.push(r);
+  });
+  if (!ordered.length) {
+    host.innerHTML = '<p style="color:var(--text3);font-size:13px;">No structured fields available.</p>';
+    return;
+  }
+  host.innerHTML = ordered.slice(0, 24).map(r =>
+    `<div class="fleet-kv"><div class="k">${escapeHtml(r.key)}</div><div class="v">${escapeHtml(r.val)}</div></div>`
+  ).join('');
+}
+
+function formatLicenseDateYYYYMMDD(v) {
+  if (!v) return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  }
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : s;
+}
+
+function renderFleetLicenseKv(hostId, lic) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const rows = [];
+  flattenObjectForKv(lic, '', rows, 0);
+  const wanted = rows.filter((r) => {
+    const k = String(r.key || '');
+    return (
+      k === 'startDate' || k.endsWith('.startDate') ||
+      k === 'endDate' || k.endsWith('.endDate') ||
+      k === 'maxInstances' || k.endsWith('.maxInstances')
+    );
+  }).map((r) => {
+    if (r.key === 'startDate' || r.key.endsWith('.startDate') || r.key === 'endDate' || r.key.endsWith('.endDate')) {
+      return { key: r.key, val: formatLicenseDateYYYYMMDD(r.val) };
+    }
+    return r;
+  });
+
+  const prefer = ['startDate', 'endDate', 'maxInstances'];
+  const ordered = [];
+  prefer.forEach(k => {
+    const row = wanted.find(r => r.key === k || r.key.endsWith('.' + k));
+    if (row) ordered.push(row);
+  });
+  wanted.forEach(r => {
+    if (!ordered.includes(r)) ordered.push(r);
+  });
+  if (!ordered.length) {
+    host.innerHTML = '<p style="color:var(--text3);font-size:13px;">No structured fields available.</p>';
+    return;
+  }
+  host.innerHTML = ordered.slice(0, 24).map(r =>
+    `<div class="fleet-kv"><div class="k">${escapeHtml(r.key)}</div><div class="v">${escapeHtml(r.val)}</div></div>`
+  ).join('');
+}
+
+function healthFlattenRows(obj) {
+  const rows = [];
+  flattenObjectForKv(obj, '', rows, 0);
+  return rows;
+}
+
+function healthStatusClass(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return 'unknown';
+  if (s === 'ok' || s === 'healthy' || s === 'up' || s === 'green' || s === 'pass' || s === 'true') return 'ok';
+  if (s === 'warning' || s === 'warn' || s === 'degraded' || s === 'yellow') return 'warn';
+  if (s === 'error' || s === 'critical' || s === 'down' || s === 'red' || s === 'fail' || s === 'false') return 'err';
+  return 'unknown';
+}
+
+function healthPercentFromRow(row) {
+  if (!row) return null;
+  const raw = String(row.val || '').trim();
+  if (!raw) return null;
+  const m = raw.match(/-?\d+(\.\d+)?/);
+  if (!m) return null;
+  let n = Number(m[0]);
+  if (!isFinite(n)) return null;
+  if (raw.includes('%')) return Math.max(0, Math.min(100, n));
+  if (n >= 0 && n <= 1) n = n * 100;
+  return Math.max(0, Math.min(100, n));
+}
+
+function pickHealthRow(rows, patterns) {
+  for (const p of patterns) {
+    const hit = rows.find(r => p.test(r.key));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function prettyTailLabel(key) {
+  const tail = String(key || '').split('.').slice(-1)[0] || key;
+  return tail.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ').replace(/\s+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderFleetHealthDashboard(hostId, healthObj) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  if (!healthObj || typeof healthObj !== 'object') {
+    host.innerHTML = '<p style="color:var(--text3);font-size:13px;">No structured health fields available.</p>';
+    return;
+  }
+  const rows = healthFlattenRows(healthObj);
+  if (!rows.length) {
+    host.innerHTML = '<p style="color:var(--text3);font-size:13px;">No structured health fields available.</p>';
+    return;
+  }
+
+  const summaryDefs = [
+    { label: 'Overall', pats: [/overall.*status/i, /^status$/i, /health$/i] },
+    { label: 'CPU', pats: [/cpu.*status/i, /status.*cpu/i, /cpu.*health/i] },
+    { label: 'Memory', pats: [/memory.*status/i, /status.*memory/i, /memory.*health/i] },
+    { label: 'Storage', pats: [/storage.*status/i, /status.*storage/i, /disk.*status/i] },
+    { label: 'Database', pats: [/database.*status/i, /db.*status/i] },
+    { label: 'Elastic', pats: [/elastic.*status/i, /elasticsearch.*status/i] },
+    { label: 'Queue', pats: [/queue.*status/i, /rabbit.*status/i] }
+  ];
+  const summaryItems = summaryDefs.map(def => {
+    const row = pickHealthRow(rows, def.pats);
+    const cls = row ? healthStatusClass(row.val) : 'unknown';
+    return `<div class="health-summary-item"><div class="health-summary-dot ${cls}"></div><div class="health-summary-label">${escapeHtml(def.label)}</div></div>`;
+  }).join('');
+
+  const metricDefs = [
+    { label: 'Morpheus CPU', pats: [/morpheus.*cpu.*(usage|percent|pct)/i, /morpheus.*cpu$/i] },
+    { label: 'System CPU', pats: [/system.*cpu.*(usage|percent|pct)/i, /system.*cpu$/i] },
+    { label: 'Morpheus Memory', pats: [/morpheus.*memory.*(usage|percent|pct)/i] },
+    { label: 'System Memory', pats: [/system.*memory.*(usage|percent|pct)/i] },
+    { label: 'Used Swap', pats: [/used.*swap.*(usage|percent|pct)/i, /swap.*used.*(usage|percent|pct)/i, /swap.*usage/i] },
+    { label: 'Storage', pats: [/storage.*(usage|percent|pct)/i, /disk.*(usage|percent|pct)/i] }
+  ];
+  const metricItems = metricDefs.map(def => {
+    const row = pickHealthRow(rows, def.pats);
+    const p = healthPercentFromRow(row);
+    const pct = p == null ? 0 : p;
+    const color = pct >= 95 ? '#ef4444' : (pct >= 80 ? '#f59e0b' : '#22c55e');
+    return `<div class="health-level">
+      <div class="health-gauge" style="--p:${pct};--g:${color};"></div>
+      <div class="health-gauge-val">${p == null ? '—' : (Math.round(pct * 10) / 10) + '%'}</div>
+      <div class="health-level-label">${escapeHtml(def.label)}</div>
+    </div>`;
+  }).join('');
+
+  const cpuLines = rows
+    .filter(r => /cpu|processor|processTime|systemLoad|loadAverage/i.test(r.key))
+    .slice(0, 8)
+    .map(r => `<div class="health-line">${escapeHtml(prettyTailLabel(r.key))}: ${escapeHtml(r.val)}</div>`)
+    .join('');
+  const memLines = rows
+    .filter(r => /memory|swap|ram/i.test(r.key))
+    .slice(0, 10)
+    .map(r => `<div class="health-line">${escapeHtml(prettyTailLabel(r.key))}: ${escapeHtml(r.val)}</div>`)
+    .join('');
+
+  host.innerHTML = `
+    <div class="health-dash">
+      <div>
+        <div class="health-row-title">Health Summary</div>
+        <div class="health-summary-row">${summaryItems}</div>
+      </div>
+      <div>
+        <div class="health-row-title">Health Levels</div>
+        <div class="health-levels-row">${metricItems}</div>
+      </div>
+      <div class="health-groups">
+        <section class="health-group">
+          <h4>CPU</h4>
+          <div class="health-lines">${cpuLines || '<div class="health-line" style="color:var(--text3)">No CPU fields available.</div>'}</div>
+        </section>
+        <section class="health-group">
+          <h4>Memory</h4>
+          <div class="health-lines">${memLines || '<div class="health-line" style="color:var(--text3)">No memory fields available.</div>'}</div>
+        </section>
+      </div>
+    </div>`;
+}
+
+function formatJsonPretty(raw) {
+  const o = parseJsonObject(raw);
+  if (!o) return raw ? String(raw) : '(empty)';
+  try { return JSON.stringify(o, null, 2); } catch (_) { return String(raw); }
+}
+
+async function renderFleetApplianceDetail(profileId) {
+  const p = profilesCache.find(x => x.id === profileId);
+  const err = state.fleetDiscoveryErrors[profileId];
+  let snap = state.fleetSnapshots[profileId];
+
+  if (!snap && !err) {
+    try {
+      snap = await api('/api/profiles/snapshot?id=' + encodeURIComponent(profileId));
+      state.fleetSnapshots[profileId] = snap;
+      delete state.fleetDiscoveryErrors[profileId];
+    } catch (e) {
+      /* keep going to error UI */
+    }
+  }
+
+  const name = p ? p.name : (err ? err.name : profileId);
+  document.getElementById('fleetDetailName').textContent = name;
+
+  if (!snap) {
+    document.getElementById('fleetDetailMeta').innerHTML =
+      escapeHtml(err ? err.url : (p && p.url) || '') +
+      '<br><span style="color:var(--error);">' + escapeHtml(err ? err.message : 'No discovery data — run discovery from Inventory.') + '</span>';
+    document.getElementById('fleetDetailHealthPill').innerHTML = '<span class="health-pill err">Unavailable</span>';
+    document.getElementById('fleetDetailStats').innerHTML = '';
+    document.getElementById('fleetDetailErrors').classList.add('hidden');
+    ['fleetDetailLicenseKv', 'fleetDetailCategoryList', 'fleetDetailCategoryFilters'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
+    return;
+  }
+
+  const health = fleetHealthSummary(snap);
+  const disc = snap.discovery || { categories: [], total: 0, errors: [] };
+  const at = snap.discoveredAt ? new Date(snap.discoveredAt).toLocaleString() : '—';
+
+  document.getElementById('fleetDetailMeta').innerHTML = [
+    escapeHtml(snap.url || ''),
+    snap.connectedAs ? 'Connected as <strong>' + escapeHtml(snap.connectedAs) + '</strong>' : '',
+    'Discovered ' + escapeHtml(at)
+  ].filter(Boolean).join('<br>');
+
+  document.getElementById('fleetDetailHealthPill').innerHTML =
+    '<span class="health-pill ' + health.cls + '">' + escapeHtml(health.label) + '</span>';
+
+  document.getElementById('fleetDetailStats').innerHTML = `
+    <div class="stat-chip"><div class="stat-num">${disc.total != null ? disc.total : 0}</div><div class="stat-label">Resources</div></div>
+    <div class="stat-chip"><div class="stat-num">${(disc.categories || []).length}</div><div class="stat-label">Categories</div></div>
+    <div class="stat-chip"><div class="stat-num">${(disc.errors || []).length}</div><div class="stat-label">API warnings</div></div>
+  `;
+
+  const errDiv = document.getElementById('fleetDetailErrors');
+  if (disc.errors && disc.errors.length) {
+    errDiv.classList.remove('hidden');
+    errDiv.innerHTML = `<div class="error-list" style="margin-top:0;"><p style="color:var(--warn);font-weight:700;margin-bottom:6px;">⚠ ${disc.errors.length} endpoint(s) returned errors:</p>${disc.errors.map(e => '<p>• ' + escapeHtml(e) + '</p>').join('')}</div>`;
+  } else {
+    errDiv.classList.add('hidden');
+    errDiv.innerHTML = '';
+  }
+
+  const licErr = document.getElementById('fleetDetailLicenseErr');
+  if (snap.licenseError) {
+    licErr.classList.remove('hidden');
+    licErr.textContent = snap.licenseError;
+    document.getElementById('fleetDetailLicenseKv').innerHTML = '';
+  } else {
+    licErr.classList.add('hidden');
+    const licObj = parseJsonObject(snap.license);
+    const licInner = licObj && licObj.license ? licObj.license : licObj;
+    renderFleetLicenseKv('fleetDetailLicenseKv', licInner);
+  }
+
+  const healthErr = document.getElementById('fleetDetailHealthErr');
+  if (snap.healthError) {
+    healthErr.classList.remove('hidden');
+    healthErr.textContent = snap.healthError;
+    document.getElementById('fleetDetailHealthKv').innerHTML = '';
+  } else {
+    healthErr.classList.add('hidden');
+    renderFleetHealthDashboard('fleetDetailHealthKv', parseJsonObject(snap.health));
+  }
+
+  renderFleetDetailCategoryChart(disc);
+  renderFleetDetailOverview(disc);
+  renderFleetDetailCategoryFilters(disc);
+  renderFleetDetailDiscovery();
+}
+
+function renderFleetDetailOverview(d) {
+  const el = document.getElementById('fleetDetailOverview');
+  if (!el || !d) return;
+  const largest = [...(d.categories || [])].sort((a, b) => b.items.length - a.items.length)[0];
+  el.innerHTML = `
+    <div class="overview-row"><span class="ov-label">Total discovered</span><span class="ov-val">${d.total != null ? d.total : 0}</span></div>
+    <div class="overview-row"><span class="ov-label">Categories</span><span class="ov-val">${(d.categories || []).length}</span></div>
+    <div class="overview-row"><span class="ov-label">Largest category</span><span class="ov-val" style="font-size:14px">${largest ? largest.items.length + ' · ' + escapeHtml(largest.name) : '—'}</span></div>`;
+}
+
+function renderFleetDetailCategoryChart(d) {
+  const host = document.getElementById('fleetDetailCategoryChart');
+  if (!host || !d || !d.categories) return;
+  const sorted = [...d.categories].sort((a, b) => b.items.length - a.items.length).slice(0, 14);
+  const max = Math.max(...sorted.map(c => c.items.length), 1);
+  host.innerHTML = sorted.map(cat => {
+    const w = Math.round((cat.items.length / max) * 100);
+    const full = escapeHtml(categoryDisplayLabel(cat));
+    const short = full.length > 22 ? escapeHtml(full.slice(0, 20)) + '…' : full;
+    return `<div class="bar-row"><span class="bar-name" title="${full}">${short}</span><div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div><span class="bar-count">${cat.items.length}</span></div>`;
+  }).join('') || '<p style="color:var(--text3);font-size:12px;">No categories</p>';
+}
+
+function renderFleetDetailCategoryFilters(d) {
+  const filterDiv = document.getElementById('fleetDetailCategoryFilters');
+  if (!filterDiv || !d) return;
+  filterDiv.innerHTML = `<button type="button" class="filter-btn ${state.fleetDetailFilter === 'ALL' ? 'active' : ''}" data-cat="ALL" onclick="setFleetDetailFilter('ALL', this)">All</button>`;
+  (d.categories || []).forEach(cat => {
+    const active = state.fleetDetailFilter === cat.name ? 'active' : '';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'filter-btn ' + active;
+    btn.dataset.cat = cat.name;
+    btn.onclick = () => setFleetDetailFilter(cat.name, btn);
+    btn.innerHTML = `${catIcon(cat.name)} ${escapeHtml(categoryDisplayLabel(cat))} <span style="color:var(--text3)">(${cat.items.length})</span>`;
+    filterDiv.appendChild(btn);
+  });
+}
+
+function setFleetDetailFilter(name, btn) {
+  state.fleetDetailFilter = name;
+  document.querySelectorAll('#fleetDetailCategoryFilters .filter-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderFleetDetailDiscovery();
+}
+
+function renderFleetDetailDiscovery() {
+  const profileId = state.fleetDetailProfileId;
+  const snap = profileId ? state.fleetSnapshots[profileId] : null;
+  const container = document.getElementById('fleetDetailCategoryList');
+  if (!container || !snap || !snap.discovery) return;
+
+  const d = snap.discovery;
+  const search = (document.getElementById('fleetDetailSearch') || {}).value.toLowerCase();
+  const filter = state.fleetDetailFilter;
+  container.innerHTML = '';
+
+  let totalVisible = 0;
+  const visibleByParent = {};
+
+  (d.categories || []).forEach(cat => {
+    if (filter !== 'ALL' && cat.name !== filter) return;
+    const filtered = (cat.items || []).filter(item =>
+      !search ||
+      (item.name || '').toLowerCase().includes(search) ||
+      (item.subType || '').toLowerCase().includes(search) ||
+      (item.type || '').toLowerCase().includes(search) ||
+      String(item.id).includes(search) ||
+      (item.description || '').toLowerCase().includes(search)
+    );
+    if (!filtered.length) return;
+    const parent = parentPathLabel(cat) || 'Other';
+    if (!visibleByParent[parent]) visibleByParent[parent] = [];
+    visibleByParent[parent].push({ cat, filtered });
+  });
+
+  Object.keys(visibleByParent).sort().forEach(parent => {
+    const parentHeader = document.createElement('div');
+    parentHeader.className = 'category-parent-header';
+    parentHeader.textContent = catIcon(parent) + ' ' + parent;
+    container.appendChild(parentHeader);
+
+    visibleByParent[parent].forEach(({ cat, filtered }) => {
+      totalVisible += filtered.length;
+      const group = document.createElement('div');
+      group.className = 'category-group';
+
+      const header = document.createElement('div');
+      header.className = 'category-header';
+      header.innerHTML = `
+        <span class="cat-icon">${catIcon(cat.name)}</span>
+        <span class="cat-name">${escapeHtml(cat.name)}</span>
+        <span class="cat-count">${filtered.length} item${filtered.length !== 1 ? 's' : ''}</span>
+        <span class="cat-chevron open">▶</span>
+      `;
+
+      const list = document.createElement('div');
+      list.className = 'item-list open';
+
+      filtered.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'item-row';
+        row.style.cursor = 'pointer';
+        row.title = 'Open relation view';
+        row.innerHTML = `
+          <span class="item-name" title="${escapeHtml(item.name || '')}">${escapeHtml(item.name || '<unnamed>')}</span>
+          ${item.subType ? `<span class="item-subtype">${escapeHtml(item.subType)}</span>` : ''}
+          ${item.type ? `<span class="item-subtype">${escapeHtml(item.type)}</span>` : ''}
+          <span class="item-id">#${item.id}</span>
+        `;
+        row.addEventListener('click', () => openFleetRelationsForItem(profileId, cat, item));
+        list.appendChild(row);
+      });
+
+      header.addEventListener('click', () => {
+        list.classList.toggle('open');
+        header.querySelector('.cat-chevron').classList.toggle('open');
+      });
+
+      group.appendChild(header);
+      group.appendChild(list);
+      container.appendChild(group);
+    });
+  });
+
+  if (!totalVisible) {
+    container.innerHTML = '<p style="color:var(--text3);padding:16px;">No items match your search or filter.</p>';
+  }
+}
+
+function parseJsonSafe(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch (_) { return {}; }
+}
+
+function renderRelationGraph(nodes, edges) {
+  if (!Array.isArray(nodes) || !nodes.length) return '';
+  const byLevel = {};
+  nodes.forEach(n => {
+    const lvl = Number(n.level || 0);
+    if (!byLevel[lvl]) byLevel[lvl] = [];
+    byLevel[lvl].push(n);
+  });
+  const levels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+  const nodeW = 180, nodeH = 56, xGap = 240, yGap = 86;
+  const pos = {};
+  let maxY = 0;
+  levels.forEach(lvl => {
+    byLevel[lvl].forEach((n, i) => {
+      const x = 20 + lvl * xGap;
+      const y = 20 + i * yGap;
+      pos[n.id] = { x, y, cx: x + nodeW / 2, cy: y + nodeH / 2 };
+      if (y > maxY) maxY = y;
+    });
+  });
+  const width = Math.max(780, levels.length * xGap + 260);
+  const height = Math.max(340, maxY + 110);
+
+  const edgePaths = (edges || []).map(e => {
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) return '';
+    const x1 = a.x + nodeW, y1 = a.cy;
+    const x2 = b.x, y2 = b.cy;
+    const mx = (x1 + x2) / 2;
+    return `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="#4f6b95" stroke-width="1.4" fill="none" opacity="0.9"/>`;
+  }).join('');
+
+  const nodeDivs = nodes.map(n => {
+    const p = pos[n.id];
+    if (!p) return '';
+    const clickable = n.clickType && n.clickId ? ' clickable' : '';
+    const clickAttr = (n.clickType && n.clickId)
+      ? ` onclick="openRelationFromGraph('${String(n.clickType).replace(/'/g, "\\'")}', ${Number(n.clickId)})" title="Open relation details"`
+      : '';
+    return `<div class="relation-node${clickable}" style="left:${p.x}px;top:${p.y}px;"${clickAttr}>
+      <div class="n-title">${escapeHtml(n.label || '')}</div>
+      <div class="n-sub">${escapeHtml(n.sub || '')}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="relation-graph-wrap">
+    <div class="relation-graph" style="width:${width}px;height:${height}px;">
+      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${edgePaths}</svg>
+      ${nodeDivs}
+    </div>
+  </div>`;
+}
+
+function findDiscoveredItemByTypeAndID(discovery, typeNorm, id) {
+  if (!discovery || !Array.isArray(discovery.categories) || !id) return null;
+  const wantType = normType(typeNorm);
+  const wantID = Number(id);
+  for (const cat of discovery.categories) {
+    for (const item of (cat.items || [])) {
+      if (Number(item.id) === wantID && normType(item.type) === wantType) {
+        return { category: cat, item };
+      }
+    }
+  }
+  return null;
+}
+
+function openRelationFromGraph(typeNorm, id) {
+  const ctx = state.fleetRelationContext;
+  if (!ctx) return;
+  const profileId = ctx.profileId || state.fleetDetailProfileId;
+  const snap = profileId ? state.fleetSnapshots[profileId] : null;
+  const d = snap && snap.discovery;
+  if (!d) return;
+  const found = findDiscoveredItemByTypeAndID(d, typeNorm, id);
+  if (!found) return;
+  openFleetRelationsForItem(profileId, found.category, found.item);
+}
+
+function openFleetRelationsForItem(profileId, category, item) {
+  state.fleetRelationContext = { profileId, category: category.name || '', item };
+  setFleetSubView('relations');
+}
+
+function renderFleetRelationsView() {
+  const host = document.getElementById('fleetRelationsMount');
+  if (!host) return;
+  const ctx = state.fleetRelationContext;
+  if (!ctx || !ctx.item) {
+    host.innerHTML = '<div class="empty"><p>Select an item from Appliance detail to inspect relations.</p></div>';
+    return;
+  }
+  const profileId = ctx.profileId || state.fleetDetailProfileId;
+  const snap = profileId ? state.fleetSnapshots[profileId] : null;
+  const d = (snap && snap.discovery) || null;
+  if (!d) {
+    host.innerHTML = '<div class="empty"><p>No discovery loaded for this appliance.</p></div>';
+    return;
+  }
+
+  const item = ctx.item;
+  const itemRaw = parseJsonSafe(item.rawJson);
+  const t = normType(item.type);
+  const blocks = [];
+
+  // Common identity block
+  blocks.push(`<div class="fleet-kv-grid">
+    <div class="fleet-kv"><div class="k">Category</div><div class="v">${escapeHtml(ctx.category || '—')}</div></div>
+    <div class="fleet-kv"><div class="k">Type</div><div class="v">${escapeHtml(item.type || '—')}</div></div>
+    <div class="fleet-kv"><div class="k">Name</div><div class="v">${escapeHtml(item.name || '—')}</div></div>
+    <div class="fleet-kv"><div class="k">ID</div><div class="v">#${escapeHtml(String(item.id || '—'))}</div></div>
+  </div>`);
+
+  if (t === 'task') {
+    const rel = taskRelationsFromDiscovery(item, itemRaw, d);
+    blocks.push(rel);
+  } else if (t === 'workflow') {
+    const rel = workflowRelationsFromDiscovery(item, itemRaw, d);
+    blocks.push(rel);
+  } else if (t === 'catalogitem') {
+    const rel = catalogRelationsFromDiscovery(item, itemRaw, d);
+    blocks.push(rel);
+  } else if (t === 'input') {
+    const rel = inputRelationsFromDiscovery(item, itemRaw, d);
+    blocks.push(rel);
+  } else if (t === 'optionlist') {
+    const rel = optionListRelationsFromDiscovery(item, itemRaw, d);
+    blocks.push(rel);
+  } else {
+    blocks.push('<div class="alert info"><span>ℹ</span><span>Relation extraction is currently optimized for Tasks. Other item types will be added next.</span></div>');
+  }
+
+  host.innerHTML = blocks.join('');
+}
+
+function taskRelationsFromDiscovery(item, taskRaw, discovery) {
+  const rows = [];
+  const relWorkflow = [];
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(w => {
+      if (normType(w.type) !== 'workflow') return;
+      const wr = parseJsonSafe(w.rawJson);
+      const tst = wr.taskSetTasks || [];
+      const hit = tst.some(e => {
+        const t = e && e.task;
+        if (!t) return false;
+        const tid = Number(t.id || 0);
+        const tn = (t.name || '').toLowerCase();
+        return (item.id && tid === item.id) || (item.name && tn === String(item.name).toLowerCase());
+      });
+      if (hit) relWorkflow.push(w);
+    });
+  });
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by workflows:</strong> ${relWorkflow.length ? relWorkflow.map(w => `${escapeHtml(w.name)} (#${w.id})`).join(', ') : '<span style="color:var(--text3)">none found in discovery</span>'}</div>`);
+
+  const repo = (taskRaw.file && taskRaw.file.repository) || {};
+  const sourceType = (((taskRaw.file || {}).sourceType) || '').toLowerCase();
+  if (sourceType === 'repository') {
+    const repoName = repo.name || '';
+    const repoId = Number(repo.id || 0);
+    let integrationHint = '';
+    const ansibleGitId = (((taskRaw.taskOptions || {}).ansibleGitId) || '').toString();
+    const localScriptGitId = (((taskRaw.taskOptions || {}).localScriptGitId) || '').toString();
+    const intItems = [];
+    (discovery.categories || []).forEach(cat => {
+      (cat.items || []).forEach(i => {
+        if (normType(i.type) !== 'integration') return;
+        // Primary relation for repository-backed tasks: file.repository.id -> integration.id
+        if (repoId > 0 && Number(i.id || 0) === repoId) intItems.push(i);
+        if (ansibleGitId && String(i.id) === ansibleGitId) intItems.push(i);
+        if (localScriptGitId && String(i.id) === localScriptGitId) intItems.push(i);
+        if (repoName && String(i.name || '').toLowerCase() === String(repoName).toLowerCase()) intItems.push(i);
+        if (repoName && String(i.name || '').toLowerCase().includes(String(repoName).toLowerCase())) intItems.push(i);
+      });
+    });
+    const uniq = [];
+    const seen = new Set();
+    intItems.forEach(i => { const k = `${i.id}`; if (!seen.has(k)) { seen.add(k); uniq.push(i); } });
+    if (!uniq.length) integrationHint = '<span style="color:var(--warn)">No matching integration found in discovery set.</span>';
+    rows.push(`<div style="margin-bottom:10px;"><strong>Repository source:</strong> ${escapeHtml(repoName || 'yes')}${repoId > 0 ? ` (#${repoId})` : ''}</div>`);
+    rows.push(`<div style="margin-bottom:10px;"><strong>Related integrations:</strong> ${uniq.length ? uniq.map(i => `${escapeHtml(i.name)} (#${i.id})`).join(', ') : integrationHint}</div>`);
+  } else {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Source type:</strong> ${escapeHtml(sourceType || 'local')}</div>`);
+  }
+
+  const graphNodes = [
+    { id: `task-${item.id || 0}`, label: item.name || 'Task', sub: `Task #${item.id || ''}`, level: 0, clickType: 'task', clickId: item.id || 0 }
+  ];
+  const graphEdges = [];
+  relWorkflow.forEach((w, i) => {
+    const id = `wf-${w.id || i}`;
+    graphNodes.push({ id, label: w.name || 'Workflow', sub: `Workflow #${w.id || ''}`, level: 1, clickType: 'workflow', clickId: w.id || 0 });
+    graphEdges.push({ from: `task-${item.id || 0}`, to: id });
+  });
+  if (sourceType === 'repository') {
+    const repo = (taskRaw.file && taskRaw.file.repository) || {};
+    const rid = Number(repo.id || 0);
+    const rname = String(repo.name || '').trim();
+    if (rid > 0 || rname) {
+      const id = `int-${rid || rname.toLowerCase()}`;
+      graphNodes.push({ id, label: rname || 'Integration', sub: `Integration #${rid || ''}`, level: 1, clickType: 'integration', clickId: rid || 0 });
+      graphEdges.push({ from: `task-${item.id || 0}`, to: id });
+    }
+  }
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Task relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function workflowRelationsFromDiscovery(item, wfRaw, discovery) {
+  const rows = [];
+  const taskRefs = Array.isArray(wfRaw.taskSetTasks) ? wfRaw.taskSetTasks : (Array.isArray(wfRaw.tasks) ? wfRaw.tasks : []);
+
+  const tasksById = new Map();
+  const tasksByName = new Map();
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(i => {
+      if (normType(i.type) !== 'task') return;
+      tasksById.set(Number(i.id || 0), i);
+      tasksByName.set(String(i.name || '').toLowerCase(), i);
+    });
+  });
+
+  const relatedTasks = [];
+  const unresolvedTasks = [];
+  const workflowIntegrations = [];
+  const seenInteg = new Set();
+  const pushResolved = (pick) => {
+    if (!pick) return;
+    if (!relatedTasks.find(x => Number(x.id) === Number(pick.id))) relatedTasks.push(pick);
+  };
+  const pushUnresolved = (name, id) => {
+    unresolvedTasks.push(`${name || 'task'}${id ? ` (#${id})` : ''}`);
+  };
+
+  taskRefs.forEach(e => {
+    if (!e || typeof e !== 'object') return;
+    const t = (e.task && typeof e.task === 'object') ? e.task : null;
+    const tid = Number((t && t.id) || e.taskId || e.id || 0);
+    const tname = String((t && t.name) || e.taskName || e.name || '').trim();
+    const byId = tid > 0 ? tasksById.get(tid) : null;
+    const byName = tname ? tasksByName.get(tname.toLowerCase()) : null;
+    const pick = byId || byName;
+    if (pick) pushResolved(pick);
+    else pushUnresolved(tname, tid);
+
+    // Nested task payload may include repository integration relation
+    const file = t && t.file && typeof t.file === 'object' ? t.file : null;
+    if (file && String(file.sourceType || '').toLowerCase() === 'repository') {
+      const repo = file.repository && typeof file.repository === 'object' ? file.repository : {};
+      const rid = Number(repo.id || 0);
+      const rname = String(repo.name || '').trim();
+      const key = `${rid}:${rname.toLowerCase()}`;
+      if (!seenInteg.has(key)) {
+        seenInteg.add(key);
+        workflowIntegrations.push({ id: rid, name: rname });
+      }
+    }
+  });
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Tasks in workflow:</strong> ${relatedTasks.length ? relatedTasks.map(t => `${escapeHtml(t.name)} (#${t.id})`).join(', ') : '<span style="color:var(--text3)">none found in discovery</span>'}</div>`);
+
+  const optionTypes = wfRaw.optionTypes || [];
+  if (Array.isArray(optionTypes) && optionTypes.length) {
+    const formatted = optionTypes.map(o => {
+      if (o && typeof o === 'object') {
+        const n = o.name || o.code || '';
+        const id = o.id ? ` (#${o.id})` : '';
+        return `${escapeHtml(String(n || 'optionType'))}${id}`;
+      }
+      return escapeHtml(String(o));
+    }).join(', ');
+    rows.push(`<div style="margin-bottom:10px;"><strong>Workflow option types:</strong> ${formatted}</div>`);
+  } else {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Workflow option types:</strong> <span style="color:var(--text3)">none</span></div>`);
+  }
+
+  // Option list dependencies from workflow optionTypes[].optionList
+  const optionLists = [];
+  const seenList = new Set();
+  if (Array.isArray(optionTypes)) {
+    optionTypes.forEach(o => {
+      if (!o || typeof o !== 'object' || !o.optionList || typeof o.optionList !== 'object') return;
+      const lid = Number(o.optionList.id || 0);
+      const lname = String(o.optionList.name || '').trim();
+      const key = `${lid}:${lname.toLowerCase()}`;
+      if (seenList.has(key)) return;
+      seenList.add(key);
+      optionLists.push({ id: lid, name: lname });
+    });
+  }
+  rows.push(`<div style="margin-bottom:10px;"><strong>Related option lists:</strong> ${
+    optionLists.length
+      ? optionLists.map(x => `${escapeHtml(x.name || 'optionList')}${x.id ? ` (#${x.id})` : ''}`).join(', ')
+      : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Related integrations (from nested tasks):</strong> ${
+    workflowIntegrations.length
+      ? workflowIntegrations.map(x => `${escapeHtml(x.name || 'integration')}${x.id ? ` (#${x.id})` : ''}`).join(', ')
+      : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+
+  if (unresolvedTasks.length) {
+    rows.push(`<div class="alert warn" style="margin-top:8px;"><span>⚠</span><span>Referenced task(s) not found in discovery set: ${escapeHtml(unresolvedTasks.join(', '))}</span></div>`);
+  }
+
+  const graphNodes = [
+    { id: `wf-${item.id || 0}`, label: item.name || 'Workflow', sub: `Workflow #${item.id || ''}`, level: 0, clickType: 'workflow', clickId: item.id || 0 }
+  ];
+  const graphEdges = [];
+
+  relatedTasks.forEach((t, i) => {
+    const id = `task-${t.id || i}`;
+    graphNodes.push({ id, label: t.name || 'Task', sub: `Task #${t.id || ''}`, level: 1, clickType: 'task', clickId: t.id || 0 });
+    graphEdges.push({ from: `wf-${item.id || 0}`, to: id });
+  });
+
+  optionLists.forEach((o, i) => {
+    const id = `olist-${o.id || i}`;
+    graphNodes.push({ id, label: o.name || 'Option list', sub: `OptionList #${o.id || ''}`, level: 1, clickType: 'optionlist', clickId: o.id || 0 });
+    graphEdges.push({ from: `wf-${item.id || 0}`, to: id });
+  });
+
+  workflowIntegrations.forEach((x, i) => {
+    const id = `int-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Integration', sub: `Integration #${x.id || ''}`, level: 2, clickType: 'integration', clickId: x.id || 0 });
+  });
+
+  relatedTasks.forEach((t) => {
+    const taskId = `task-${t.id}`;
+    workflowIntegrations.forEach((x) => {
+      // show possible linkage from task -> integration for nested repository tasks
+      graphEdges.push({ from: taskId, to: `int-${x.id}` });
+    });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Workflow relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function categoryItemsByNormType(discovery) {
+  const m = new Map();
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(i => {
+      const t = normType(i.type);
+      if (!m.has(t)) m.set(t, []);
+      m.get(t).push(i);
+    });
+  });
+  return m;
+}
+
+function resolveRefFromDiscovery(ref, typeNorm, byType, fallbackName) {
+  const list = byType.get(typeNorm) || [];
+  if (ref && typeof ref === 'object') {
+    const rid = Number(ref.id || 0);
+    const rname = String(ref.name || '').trim().toLowerCase();
+    if (rid > 0) {
+      const hit = list.find(x => Number(x.id || 0) === rid);
+      if (hit) return hit;
+    }
+    if (rname) {
+      const hit = list.find(x => String(x.name || '').toLowerCase() === rname);
+      if (hit) return hit;
+    }
+  }
+  if (fallbackName) {
+    const n = String(fallbackName).toLowerCase();
+    const hit = list.find(x => String(x.name || '').toLowerCase() === n);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function catalogRelationsFromDiscovery(item, catRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const rows = [];
+
+  const rel = {
+    instanceType: null,
+    layouts: [],
+    workflows: [],
+    forms: [],
+    optionLists: [],
+    inputs: []
+  };
+
+  // Common catalog-item relations in Morpheus payloads
+  rel.instanceType =
+    resolveRefFromDiscovery(catRaw.instanceType, 'instancetype', byType) ||
+    resolveRefFromDiscovery(catRaw.instanceTypeLayout && catRaw.instanceTypeLayout.instanceType, 'instancetype', byType);
+
+  const pushUnique = (arr, itemObj) => {
+    if (!itemObj) return;
+    if (!arr.find(x => Number(x.id) === Number(itemObj.id))) arr.push(itemObj);
+  };
+
+  pushUnique(rel.layouts, resolveRefFromDiscovery(catRaw.instanceTypeLayout, 'layout', byType));
+  (catRaw.instanceTypeLayouts || []).forEach(x => pushUnique(rel.layouts, resolveRefFromDiscovery(x, 'layout', byType)));
+  (catRaw.layouts || []).forEach(x => pushUnique(rel.layouts, resolveRefFromDiscovery(x, 'layout', byType)));
+
+  pushUnique(rel.workflows, resolveRefFromDiscovery(catRaw.workflow, 'workflow', byType));
+  pushUnique(rel.workflows, resolveRefFromDiscovery(catRaw.taskSet, 'workflow', byType));
+  pushUnique(rel.workflows, resolveRefFromDiscovery(catRaw.provisionWorkflow, 'workflow', byType));
+  (catRaw.workflows || []).forEach(x => pushUnique(rel.workflows, resolveRefFromDiscovery(x, 'workflow', byType)));
+
+  pushUnique(rel.forms, resolveRefFromDiscovery(catRaw.optionTypeForm, 'form', byType));
+  (catRaw.optionTypeForms || []).forEach(x => pushUnique(rel.forms, resolveRefFromDiscovery(x, 'form', byType)));
+
+  (catRaw.optionTypes || []).forEach(o => {
+    const inputHit = resolveRefFromDiscovery(o, 'input', byType, o && (o.name || o.code));
+    pushUnique(rel.inputs, inputHit);
+    if (o && typeof o === 'object' && o.optionList) {
+      pushUnique(rel.optionLists, resolveRefFromDiscovery(o.optionList, 'optionlist', byType));
+    }
+  });
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Instance Type:</strong> ${
+    rel.instanceType ? `${escapeHtml(rel.instanceType.name)} (#${rel.instanceType.id})` : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Layouts:</strong> ${
+    rel.layouts.length ? rel.layouts.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Workflows:</strong> ${
+    rel.workflows.length ? rel.workflows.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Forms:</strong> ${
+    rel.forms.length ? rel.forms.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Inputs:</strong> ${
+    rel.inputs.length ? rel.inputs.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Option Lists:</strong> ${
+    rel.optionLists.length ? rel.optionLists.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+
+  const rootId = `catalog-${item.id || 0}`;
+  const graphNodes = [{ id: rootId, label: item.name || 'Catalog Item', sub: `Catalog #${item.id || ''}`, level: 0, clickType: 'catalogitem', clickId: item.id || 0 }];
+  const graphEdges = [];
+  if (rel.instanceType) {
+    const id = `it-${rel.instanceType.id}`;
+    graphNodes.push({ id, label: rel.instanceType.name, sub: `InstanceType #${rel.instanceType.id}`, level: 1, clickType: 'instancetype', clickId: rel.instanceType.id });
+    graphEdges.push({ from: rootId, to: id });
+  }
+  rel.layouts.forEach((x, idx) => {
+    const id = `lay-${x.id || idx}`;
+    graphNodes.push({ id, label: x.name || 'Layout', sub: `Layout #${x.id || ''}`, level: 1, clickType: 'layout', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  rel.workflows.forEach((x, idx) => {
+    const id = `wf-${x.id || idx}`;
+    graphNodes.push({ id, label: x.name || 'Workflow', sub: `Workflow #${x.id || ''}`, level: 1, clickType: 'workflow', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  rel.forms.forEach((x, idx) => {
+    const id = `form-${x.id || idx}`;
+    graphNodes.push({ id, label: x.name || 'Form', sub: `Form #${x.id || ''}`, level: 2, clickType: 'form', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  rel.inputs.forEach((x, idx) => {
+    const id = `in-${x.id || idx}`;
+    graphNodes.push({ id, label: x.name || 'Input', sub: `Input #${x.id || ''}`, level: 2, clickType: 'input', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  rel.optionLists.forEach((x, idx) => {
+    const id = `olist-${x.id || idx}`;
+    graphNodes.push({ id, label: x.name || 'Option List', sub: `OptionList #${x.id || ''}`, level: 2, clickType: 'optionlist', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Catalog relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function inputRelationsFromDiscovery(item, inputRaw, discovery) {
+  const rows = [];
+  const byType = categoryItemsByNormType(discovery);
+  const inputID = Number(item.id || 0);
+  const inputName = String(item.name || '').trim().toLowerCase();
+  const inputCode = String(inputRaw.code || inputRaw.fieldName || '').trim().toLowerCase();
+
+  const optionLists = [];
+  const seenOL = new Set();
+  const pushOptionList = (ref) => {
+    const hit = resolveRefFromDiscovery(ref, 'optionlist', byType);
+    if (!hit) return;
+    const k = String(hit.id);
+    if (!seenOL.has(k)) {
+      seenOL.add(k);
+      optionLists.push(hit);
+    }
+  };
+  if (inputRaw.optionList && typeof inputRaw.optionList === 'object') {
+    pushOptionList(inputRaw.optionList);
+  }
+
+  const forms = [];
+  const workflows = [];
+  const catalogs = [];
+  const seen = { form: new Set(), wf: new Set(), cat: new Set() };
+
+  // forms that reference this input by id/code/name in options/fieldGroups
+  (byType.get('form') || []).forEach(f => {
+    const fr = parseJsonSafe(f.rawJson);
+    let hit = false;
+    const allOpts = [];
+    (fr.options || []).forEach(o => allOpts.push(o));
+    (fr.fieldGroups || []).forEach(g => (g && g.options || []).forEach(o => allOpts.push(o)));
+    allOpts.forEach(o => {
+      if (!o || typeof o !== 'object') return;
+      const oid = Number(o.id || 0);
+      const oc = String(o.code || o.fieldName || '').trim().toLowerCase();
+      const on = String(o.name || '').trim().toLowerCase();
+      if ((inputID && oid === inputID) || (inputCode && oc === inputCode) || (inputName && on === inputName)) hit = true;
+    });
+    if (hit && !seen.form.has(String(f.id))) {
+      seen.form.add(String(f.id));
+      forms.push(f);
+    }
+  });
+
+  // workflows that reference this input via optionTypes[]
+  (byType.get('workflow') || []).forEach(w => {
+    const wr = parseJsonSafe(w.rawJson);
+    let hit = false;
+    (wr.optionTypes || []).forEach(o => {
+      if (!o || typeof o !== 'object') return;
+      const oid = Number(o.id || 0);
+      const oc = String(o.code || o.fieldName || '').trim().toLowerCase();
+      const on = String(o.name || '').trim().toLowerCase();
+      if ((inputID && oid === inputID) || (inputCode && oc === inputCode) || (inputName && on === inputName)) hit = true;
+    });
+    if (hit && !seen.wf.has(String(w.id))) {
+      seen.wf.add(String(w.id));
+      workflows.push(w);
+    }
+  });
+
+  // catalogs that reference this input via optionTypes[]
+  (byType.get('catalogitem') || []).forEach(c => {
+    const cr = parseJsonSafe(c.rawJson);
+    let hit = false;
+    (cr.optionTypes || []).forEach(o => {
+      if (!o || typeof o !== 'object') return;
+      const oid = Number(o.id || 0);
+      const oc = String(o.code || o.fieldName || '').trim().toLowerCase();
+      const on = String(o.name || '').trim().toLowerCase();
+      if ((inputID && oid === inputID) || (inputCode && oc === inputCode) || (inputName && on === inputName)) hit = true;
+    });
+    if (hit && !seen.cat.has(String(c.id))) {
+      seen.cat.add(String(c.id));
+      catalogs.push(c);
+    }
+  });
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Type:</strong> ${escapeHtml(String(inputRaw.type || item.subType || 'input'))}</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Option source:</strong> ${escapeHtml(String(inputRaw.optionSource || 'manual'))}</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Related option lists:</strong> ${
+    optionLists.length ? optionLists.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by forms:</strong> ${
+    forms.length ? forms.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by workflows:</strong> ${
+    workflows.length ? workflows.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by catalog items:</strong> ${
+    catalogs.length ? catalogs.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+
+  const rootId = `input-${item.id || 0}`;
+  const graphNodes = [{ id: rootId, label: item.name || 'Input', sub: `Input #${item.id || ''}`, level: 0, clickType: 'input', clickId: item.id || 0 }];
+  const graphEdges = [];
+  optionLists.forEach((x, i) => {
+    const id = `olist-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Option List', sub: `OptionList #${x.id || ''}`, level: 1, clickType: 'optionlist', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  forms.forEach((x, i) => {
+    const id = `form-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Form', sub: `Form #${x.id || ''}`, level: 2, clickType: 'form', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  workflows.forEach((x, i) => {
+    const id = `wf-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Workflow', sub: `Workflow #${x.id || ''}`, level: 2, clickType: 'workflow', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  catalogs.forEach((x, i) => {
+    const id = `cat-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Catalog', sub: `Catalog #${x.id || ''}`, level: 2, clickType: 'catalogitem', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Input relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function optionListRelationsFromDiscovery(item, optionListRaw, discovery) {
+  const rows = [];
+  const byType = categoryItemsByNormType(discovery);
+  const listID = Number(item.id || optionListRaw.id || 0);
+  const listName = String(item.name || optionListRaw.name || '').trim().toLowerCase();
+
+  const inputs = [];
+  const forms = [];
+  const workflows = [];
+  const catalogs = [];
+  const seen = { input: new Set(), form: new Set(), wf: new Set(), cat: new Set() };
+
+  const matchesOptionListRef = (ref) => {
+    if (!ref || typeof ref !== 'object') return false;
+    const rid = Number(ref.id || 0);
+    const rname = String(ref.name || '').trim().toLowerCase();
+    if (listID > 0 && rid === listID) return true;
+    if (listName && rname === listName) return true;
+    return false;
+  };
+
+  // Inputs directly related by optionList
+  (byType.get('input') || []).forEach(i => {
+    const ir = parseJsonSafe(i.rawJson);
+    if (matchesOptionListRef(ir.optionList)) {
+      if (!seen.input.has(String(i.id))) {
+        seen.input.add(String(i.id));
+        inputs.push(i);
+      }
+    }
+  });
+
+  // Forms containing fields that use this option list
+  (byType.get('form') || []).forEach(f => {
+    const fr = parseJsonSafe(f.rawJson);
+    let hit = false;
+    const allOpts = [];
+    (fr.options || []).forEach(o => allOpts.push(o));
+    (fr.fieldGroups || []).forEach(g => (g && g.options || []).forEach(o => allOpts.push(o)));
+    allOpts.forEach(o => {
+      if (o && typeof o === 'object' && matchesOptionListRef(o.optionList)) hit = true;
+    });
+    if (hit && !seen.form.has(String(f.id))) {
+      seen.form.add(String(f.id));
+      forms.push(f);
+    }
+  });
+
+  // Workflows using optionTypes that point to this list
+  (byType.get('workflow') || []).forEach(w => {
+    const wr = parseJsonSafe(w.rawJson);
+    let hit = false;
+    (wr.optionTypes || []).forEach(o => {
+      if (o && typeof o === 'object' && matchesOptionListRef(o.optionList)) hit = true;
+    });
+    if (hit && !seen.wf.has(String(w.id))) {
+      seen.wf.add(String(w.id));
+      workflows.push(w);
+    }
+  });
+
+  // Catalog items using optionTypes that point to this list
+  (byType.get('catalogitem') || []).forEach(c => {
+    const cr = parseJsonSafe(c.rawJson);
+    let hit = false;
+    (cr.optionTypes || []).forEach(o => {
+      if (o && typeof o === 'object' && matchesOptionListRef(o.optionList)) hit = true;
+    });
+    if (hit && !seen.cat.has(String(c.id))) {
+      seen.cat.add(String(c.id));
+      catalogs.push(c);
+    }
+  });
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by inputs:</strong> ${
+    inputs.length ? inputs.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by forms:</strong> ${
+    forms.length ? forms.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by workflows:</strong> ${
+    workflows.length ? workflows.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+  rows.push(`<div style="margin-bottom:10px;"><strong>Used by catalog items:</strong> ${
+    catalogs.length ? catalogs.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none found</span>'
+  }</div>`);
+
+  const rootId = `olist-${item.id || 0}`;
+  const graphNodes = [{
+    id: rootId,
+    label: item.name || optionListRaw.name || 'Option List',
+    sub: `OptionList #${item.id || optionListRaw.id || ''}`,
+    level: 0,
+    clickType: 'optionlist',
+    clickId: item.id || optionListRaw.id || 0
+  }];
+  const graphEdges = [];
+  inputs.forEach((x, i) => {
+    const id = `in-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Input', sub: `Input #${x.id || ''}`, level: 1, clickType: 'input', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  forms.forEach((x, i) => {
+    const id = `form-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Form', sub: `Form #${x.id || ''}`, level: 2, clickType: 'form', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  workflows.forEach((x, i) => {
+    const id = `wf-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Workflow', sub: `Workflow #${x.id || ''}`, level: 2, clickType: 'workflow', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+  catalogs.forEach((x, i) => {
+    const id = `cat-${x.id || i}`;
+    graphNodes.push({ id, label: x.name || 'Catalog', sub: `Catalog #${x.id || ''}`, level: 2, clickType: 'catalogitem', clickId: x.id || 0 });
+    graphEdges.push({ from: rootId, to: id });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Option list relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function renderDiscoveredAppliancesList() {
+  renderDiscoveredAppliancesTable();
+}
+
+async function loadFleetDiscoveredFromServer(silent = false) {
+  if (!profilesCache.length) {
+    await loadProfilesList();
+  }
+  try {
+    const res = await api('/api/profiles/snapshots');
+    let loaded = 0;
+    (res.snapshots || []).forEach(entry => {
+      if (entry.profileId && entry.snapshot) {
+        state.fleetSnapshots[entry.profileId] = entry.snapshot;
+        delete state.fleetDiscoveryErrors[entry.profileId];
+        loaded++;
+      }
+    });
+    renderDiscoveredAppliancesList();
+    if (state.fleetDetailProfileId) renderFleetApplianceDetail(state.fleetDetailProfileId);
+    if (!loaded && !fleetDiscoveryEntries().length) {
+      if (!silent) alert('No cached discoveries in the database yet. Run discovery from Inventory.');
+    }
+  } catch (e) {
+    if (!silent) alert('Could not load cached snapshots: ' + e.message);
+    else console.warn('Could not load cached snapshots:', e.message);
+  }
+}
+
+function fleetLicenseLine(snap) {
+  if (snap.licenseError) return 'License: ' + snap.licenseError;
+  if (!snap.license) return 'License: not available';
+  try {
+    const root = typeof snap.license === 'string' ? JSON.parse(snap.license) : snap.license;
+    const lic = root.license || root;
+    const parts = [];
+    ['productName', 'edition', 'status', 'expiration', 'expiresAt'].forEach(k => {
+      if (lic[k]) parts.push(String(lic[k]));
+    });
+    return parts.length ? 'License: ' + parts.join(' · ') : 'License: installed';
+  } catch (_) {
+    return 'License: see details';
+  }
+}
+
+const VIEW_META = {
+  'view-connect': ['Connect source appliance', 'Saved appliance profile, API token, or username & password'],
+  'view-discovering': ['Discovering resources', 'Querying the Morpheus API for catalog objects'],
+  'view-select': ['Resource library', 'Filter, select items to migrate, then open destination'],
+  'view-destination': ['Destination appliance', 'Target credentials and migration preview'],
+  'view-results': ['Migration run', 'Per-item status, charts, and export'],
+};
+
 function showView(id) {
+  if (state.appMode === 'fleet' || state.appMode === 'profiles') return;
   ['view-connect','view-discovering','view-select','view-destination','view-results']
     .forEach(v => document.getElementById(v).classList.add('hidden'));
   document.getElementById(id).classList.remove('hidden');
+  const meta = VIEW_META[id];
+  if (meta) {
+    const t = document.getElementById('pageTitle');
+    const s = document.getElementById('pageSubtitle');
+    if (t) t.textContent = meta[0];
+    if (s) s.textContent = meta[1];
+  }
 }
 
 // ─── Step 1: Test connection ──────────────────────────────────────────────────
 async function testConnection() {
-  const url = document.getElementById('srcUrl').value.trim();
-  const token = document.getElementById('srcToken').value.trim();
-  const skip = document.getElementById('srcSkipTLS').checked;
-  if (!url || !token) return alert('Please enter URL and token.');
+  const payload = requireConnPayload('src');
+  if (!payload) return;
 
   setStatus('srcStatus', 'loading', '⏳ Testing connection...');
 
   try {
-    const res = await api('/api/test-connection', 'POST', {url, token, skipTls: skip});
+    const res = await api('/api/test-connection', 'POST', payload);
     setStatus('srcStatus', 'ok', `✓ Connected as: ${res.user}`);
     document.getElementById('btnDiscover').disabled = false;
   } catch(e) {
@@ -1225,12 +4114,14 @@ function setStatus(elId, type, msg) {
 
 // ─── Step 2: Discovery ────────────────────────────────────────────────────────
 async function startDiscovery() {
-  const url = document.getElementById('srcUrl').value.trim();
-  const token = document.getElementById('srcToken').value.trim();
-  const skip = document.getElementById('srcSkipTLS').checked;
-  if (!url || !token) return alert('Please enter URL and token.');
+  const payload = requireConnPayload('src');
+  if (!payload) return;
 
-  state.srcUrl = url; state.srcToken = token; state.srcSkipTLS = skip;
+  const srcAppl = migrationApplFromSide('src');
+  state.srcUrl = srcAppl.url || '';
+  state.srcToken = srcAppl.token || '';
+  state.srcSkipTLS = srcAppl.skipTls;
+  state.srcProfileId = srcAppl.profileId || '';
 
   setStep(2);
   showView('view-discovering');
@@ -1238,12 +4129,11 @@ async function startDiscovery() {
   const msgs = [
     'Connecting to appliance...',
     'Discovering clouds & integrations...',
-    'Scanning instances & virtual images...',
-    'Loading library: instance types, layouts...',
-    'Fetching tasks, workflows & catalog items...',
-    'Enumerating tenants, roles & policies...',
-    'Checking credentials & storage...',
-    'Scanning networks & pools...',
+    'Loading library: instance types, layouts, node types...',
+    'Fetching tasks, workflows, inputs, lists & forms...',
+    'Loading catalog items, blueprints & apps...',
+    'Enumerating tenants, roles, users, policies & groups...',
+    'Loading Cypher entries...',
     'Almost done — collating results...'
   ];
 
@@ -1263,11 +4153,16 @@ async function startDiscovery() {
   }, 900);
 
   try {
-    const res = await api('/api/discover', 'POST', {url, token, skipTls: skip});
+    const res = await api('/api/discover', 'POST', payload);
+    const disc = res && res.result ? res.result : res;
+    const discoveryId = res && typeof res.discoveryId === 'number' ? res.discoveryId : 0;
     clearInterval(ticker);
     progEl.style.width = '100%';
-    msgEl.textContent = `Discovery complete — ${res.total} items found across ${res.categories.length} categories`;
-    state.discovery = res;
+    msgEl.textContent = `Discovery complete — ${disc.total} items found across ${disc.categories.length} categories`;
+    state.discovery = disc;
+    state.currentDiscoveryId = discoveryId;
+    state.currentDiscoveryTime = disc.discoveredAt || '';
+    if (state.storagePostgres) loadDiscoveryHistory();
     maybePersistSession();
 
     setTimeout(() => {
@@ -1312,15 +4207,125 @@ function categoryDisplayLabel(cat) {
   return `${parent} / ${cat.name}`;
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderCategoryBarChart(d) {
+  const host = document.getElementById('categoryChartMount');
+  if (!host || !d.categories || !d.categories.length) return;
+  const sorted = [...d.categories].sort((a, b) => b.items.length - a.items.length).slice(0, 12);
+  const max = Math.max(...sorted.map(c => c.items.length), 1);
+  host.innerHTML = sorted.map(cat => {
+    const w = Math.round((cat.items.length / max) * 100);
+    const full = escapeHtml(cat.name);
+    const short = cat.name.length > 20 ? escapeHtml(cat.name.slice(0, 18)) + '…' : full;
+    return `<div class="bar-row"><span class="bar-name" title="${full}">${short}</span><div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div><span class="bar-count">${cat.items.length}</span></div>`;
+  }).join('');
+}
+
+function renderOverviewMini(d) {
+  const el = document.getElementById('overviewMini');
+  if (!el || !d) return;
+  const largest = [...d.categories].sort((a, b) => b.items.length - a.items.length)[0];
+  const lg = largest ? largest.items.length : 0;
+  const lgName = largest ? escapeHtml(largest.name) : '—';
+  el.innerHTML = `
+    <div class="overview-row"><span class="ov-label">Total discovered</span><span class="ov-val">${d.total}</span></div>
+    <div class="overview-row"><span class="ov-label">Categories</span><span class="ov-val">${d.categories.length}</span></div>
+    <div class="overview-row"><span class="ov-label">Largest list</span><span class="ov-val" style="font-size:15px">${lg} <span style="color:var(--text2);font-weight:500">${lgName}</span></span></div>`;
+}
+
+function renderSelectionDonut() {
+  const host = document.getElementById('selectionDonutMount');
+  if (!host) return;
+  const d = state.discovery;
+  if (!d || d.total == null) {
+    host.innerHTML = '<p style="color:var(--text3);font-size:12px;text-align:center;padding:20px;">Charts appear after discovery completes.</p>';
+    return;
+  }
+  const total = d.total > 0 ? d.total : 1;
+  const sel = state.selected.size;
+  const pct = Math.min(100, Math.round((sel / total) * 1000) / 10);
+  const R = 36;
+  const circ = 2 * Math.PI * R;
+  const dash = (pct / 100) * circ;
+  const gap = circ - dash;
+  host.innerHTML = `
+    <svg width="140" height="140" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id="donGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#22d3a6"/><stop offset="100%" stop-color="#38bdf8"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="${R}" fill="none" stroke="#1e293b" stroke-width="10"/>
+      <circle cx="50" cy="50" r="${R}" fill="none" stroke="url(#donGrad)" stroke-width="10"
+        stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${circ * 0.25}" transform="rotate(-90 50 50)" stroke-linecap="round"/>
+    </svg>
+    <div class="donut-legend"><strong>${sel}</strong> of ${d ? d.total : 0} selected (${pct}%)</div>`;
+}
+
+function renderResultsCharts(res) {
+  const chart = document.getElementById('resultsOutcomeChart');
+  const mini = document.getElementById('resultsSummaryMini');
+  const ctx = document.getElementById('migrationDiscoveryContext');
+  const skipped = res.results ? res.results.filter(r => r.status === 'skipped').length : 0;
+  const ok = res.success || 0;
+  const fail = res.failed || 0;
+  const blocked = res.blocked != null ? res.blocked : 0;
+  const partial = res.partial != null ? res.partial : 0;
+  const rows = [
+    ['Succeeded', ok, '#34d399'],
+    ['Failed', fail, '#f87171'],
+    ['Skipped', skipped, '#fbbf24'],
+    ['Blocked', blocked, '#c084fc'],
+    ['Partial', partial, '#fb923c'],
+  ].filter(([, n]) => n > 0);
+  const max = rows.length ? Math.max(...rows.map(r => r[1]), 1) : 1;
+  if (chart) {
+    chart.innerHTML = rows.length
+      ? rows.map(([lab, n, col]) => {
+          const w = Math.round((n / max) * 100);
+          return `<div class="bar-row"><span class="bar-name">${escapeHtml(lab)}</span><div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div><span class="bar-count">${n}</span></div>`;
+        }).join('')
+      : '<p style="color:var(--text3);font-size:13px;">No outcome breakdown</p>';
+  }
+  if (mini) {
+    const cr = res.created != null ? res.created : 0;
+    const up = res.updated != null ? res.updated : 0;
+    mini.innerHTML = `
+      <div class="overview-row"><span class="ov-label">Succeeded</span><span class="ov-val" style="color:#34d399">${ok}</span></div>
+      <div class="overview-row"><span class="ov-label">Created / updated</span><span class="ov-val" style="font-size:15px">${cr} / ${up}</span></div>
+      <div class="overview-row"><span class="ov-label">Failed</span><span class="ov-val" style="color:#f87171">${fail}</span></div>`;
+  }
+  if (ctx) {
+    const ts = res && res.sourceDiscoveryTime ? res.sourceDiscoveryTime : state.currentDiscoveryTime;
+    const did = res && res.sourceDiscoveryId ? res.sourceDiscoveryId : state.currentDiscoveryId;
+    if (ts) {
+      const local = new Date(ts);
+      const display = isNaN(local.getTime()) ? ts : local.toLocaleString();
+      ctx.innerHTML = `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val">${escapeHtml(display)}${did ? ` (run #${did})` : ''}</span></div>`;
+    } else {
+      ctx.innerHTML = `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val" style="color:var(--text3)">not available</span></div>`;
+    }
+  }
+}
+
 function renderDiscovery() {
   const d = state.discovery;
   if (!d) return;
 
   // Errors
+  const errDiv = document.getElementById('discoveryErrors');
   if (d.errors && d.errors.length) {
-    const errDiv = document.getElementById('discoveryErrors');
     errDiv.classList.remove('hidden');
     errDiv.innerHTML = `<div class="error-list"><p style="color:var(--warn); font-weight:700; margin-bottom:6px;">⚠ ${d.errors.length} endpoints returned errors (permissions or not available):</p>${d.errors.map(e=>`<p>• ${e}</p>`).join('')}</div>`;
+  } else if (errDiv) {
+    errDiv.classList.add('hidden');
+    errDiv.innerHTML = '';
   }
 
   // Stats bar
@@ -1330,6 +4335,10 @@ function renderDiscovery() {
     <div class="stat-chip"><div class="stat-num">${d.categories.length}</div><div class="stat-label">Categories</div></div>
     <div class="stat-chip"><div class="stat-num" id="statSelected">0</div><div class="stat-label">Selected</div></div>
   `;
+
+  renderCategoryBarChart(d);
+  renderOverviewMini(d);
+  renderSelectionDonut();
 
   // Category filter buttons
   const filterDiv = document.getElementById('categoryFilters');
@@ -1480,8 +4489,10 @@ function deselectAll() {
 function updateSelCount() {
   const n = state.selected.size;
   document.getElementById('selCount').textContent = n;
-  document.getElementById('statSelected').textContent = n;
+  const st = document.getElementById('statSelected');
+  if (st) st.textContent = n;
   document.getElementById('btnNext').disabled = n === 0;
+  renderSelectionDonut();
 }
 
 // ─── Step 4: Destination ──────────────────────────────────────────────────────
@@ -1495,6 +4506,113 @@ function goToDestination() {
 function goBack() {
   setStep(3);
   showView('view-select');
+}
+
+function normType(t) {
+  const x = String(t || '').trim().toLowerCase();
+  if (x === 'instancetype') return 'instancetype';
+  if (x === 'layout') return 'layout';
+  if (x === 'nodetype' || x === 'containertype') return 'nodetype';
+  if (x === 'workflow' || x === 'taskset') return 'workflow';
+  return x;
+}
+
+function parseItemRaw(item) {
+  try { return JSON.parse(item.rawJson || '{}'); } catch (_) { return {}; }
+}
+
+function depIdFromObj(v) {
+  return v && typeof v === 'object' ? Number(v.id || 0) : 0;
+}
+
+function extractLayoutDepIDs(layoutRaw) {
+  const nodeTypeIDs = new Set();
+  const workflowIDs = new Set();
+  (layoutRaw.containerTypes || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) nodeTypeIDs.add(id); });
+  (layoutRaw.nodeTypes || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) nodeTypeIDs.add(id); });
+  (layoutRaw.layoutContainers || []).forEach(x => {
+    if (!x || typeof x !== 'object') return;
+    const c = depIdFromObj(x.containerType);
+    const n = depIdFromObj(x.nodeType);
+    if (c > 0) nodeTypeIDs.add(c);
+    if (n > 0) nodeTypeIDs.add(n);
+  });
+  [layoutRaw.taskSet, layoutRaw.workflow, layoutRaw.provisionWorkflow].forEach(x => {
+    const id = depIdFromObj(x);
+    if (id > 0) workflowIDs.add(id);
+  });
+  return { nodeTypeIDs: [...nodeTypeIDs], workflowIDs: [...workflowIDs] };
+}
+
+function extractInstanceTypeLayoutIDs(itRaw) {
+  const ids = new Set();
+  (itRaw.instanceTypeLayouts || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) ids.add(id); });
+  (itRaw.layouts || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) ids.add(id); });
+  return [...ids];
+}
+
+function extractWorkflowTaskIDs(wfRaw) {
+  const ids = new Set();
+  (wfRaw.taskSetTasks || []).forEach(e => {
+    if (!e || typeof e !== 'object' || !e.task || typeof e.task !== 'object') return;
+    const id = Number(e.task.id || 0);
+    if (id > 0) ids.add(id);
+  });
+  return [...ids];
+}
+
+function computeAutoIncludedDependencies(discovery, selectedKeys) {
+  const byTypeId = new Map();
+  const selectedByTypeId = new Set();
+  const unresolved = [];
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(item => {
+      byTypeId.set(`${normType(item.type)}:${item.id}`, item);
+    });
+  });
+  selectedKeys.forEach(k => {
+    const [cat, idStr] = k.split(':');
+    const catData = (discovery.categories || []).find(c => c.name === cat);
+    const item = catData && (catData.items || []).find(i => i.id === Number(idStr));
+    if (item) selectedByTypeId.add(`${normType(item.type)}:${item.id}`);
+  });
+
+  const auto = new Map();
+  const queue = [...selectedByTypeId];
+  const seen = new Set(queue);
+
+  const pushDep = (typeNorm, id, ownerLabel) => {
+    const key = `${typeNorm}:${id}`;
+    const item = byTypeId.get(key);
+    if (!item) {
+      unresolved.push(`${ownerLabel} requires ${typeNorm} #${id}, not present in discovery`);
+      return;
+    }
+    if (!selectedByTypeId.has(key) && !auto.has(key)) auto.set(key, item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      queue.push(key);
+    }
+  };
+
+  while (queue.length) {
+    const key = queue.shift();
+    const item = byTypeId.get(key);
+    if (!item) continue;
+    const raw = parseItemRaw(item);
+    const t = normType(item.type);
+    if (t === 'instancetype') {
+      extractInstanceTypeLayoutIDs(raw).forEach(id => pushDep('layout', id, `instance type "${item.name}"`));
+    } else if (t === 'layout') {
+      const deps = extractLayoutDepIDs(raw);
+      deps.nodeTypeIDs.forEach(id => pushDep('nodetype', id, `layout "${item.name}"`));
+      deps.workflowIDs.forEach(id => pushDep('workflow', id, `layout "${item.name}"`));
+    } else if (t === 'workflow') {
+      extractWorkflowTaskIDs(raw).forEach(id => pushDep('task', id, `workflow "${item.name}"`));
+    }
+  }
+
+  return { autoItems: [...auto.values()], unresolved };
 }
 
 function renderPreview() {
@@ -1520,17 +4638,40 @@ function renderPreview() {
   });
 
   document.getElementById('previewList').innerHTML = html || '<div class="empty"><p>No items selected</p></div>';
+
+  const dep = computeAutoIncludedDependencies(d, [...state.selected]);
+  const autoByCat = {};
+  dep.autoItems.forEach(item => {
+    const c = item.category || 'Dependencies';
+    if (!autoByCat[c]) autoByCat[c] = [];
+    autoByCat[c].push(item);
+  });
+  let depHtml = '';
+  const depCount = dep.autoItems.length;
+  if (depCount > 0) {
+    depHtml += `<div class="alert info" style="margin-bottom:10px;"><span>ℹ</span><span><strong>${depCount}</strong> related dependency item(s) will be auto-included during migration.</span></div>`;
+    Object.entries(autoByCat).forEach(([cat, items]) => {
+      depHtml += `<div style="margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">${catIcon(cat)} ${escapeHtml(cat)} (${items.length})</div>
+        ${items.map(i => `<div style="padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:11px;border-left:2px solid #335c4d;margin:2px 0;color:var(--text2);">${escapeHtml(i.name)}</div>`).join('')}
+      </div>`;
+    });
+  } else {
+    depHtml = '<div class="alert ok" style="margin-bottom:10px;"><span>✓</span><span>No additional dependencies will be auto-included.</span></div>';
+  }
+  if (dep.unresolved.length) {
+    depHtml += `<div class="alert warn"><span>⚠</span><span>${dep.unresolved.length} dependency reference(s) were not found in current discovery and may block migration.</span></div>`;
+  }
+  document.getElementById('autoIncludePreview').innerHTML = depHtml;
 }
 
 async function testDestConnection() {
-  const url = document.getElementById('dstUrl').value.trim();
-  const token = document.getElementById('dstToken').value.trim();
-  const skip = document.getElementById('dstSkipTLS').checked;
-  if (!url || !token) return alert('Please enter destination URL and token.');
+  const payload = requireConnPayload('dst');
+  if (!payload) return;
 
   setStatus('dstStatus', 'loading', '⏳ Testing connection...');
   try {
-    const res = await api('/api/test-connection', 'POST', {url, token, skipTls: skip});
+    const res = await api('/api/test-connection', 'POST', payload);
     setStatus('dstStatus', 'ok', `✓ Connected as: ${res.user}`);
   } catch(e) {
     setStatus('dstStatus', 'err', `✗ ${e.message}`);
@@ -1539,10 +4680,16 @@ async function testDestConnection() {
 
 // ─── Step 5: Migration ────────────────────────────────────────────────────────
 async function startMigration() {
-  const dstUrl = document.getElementById('dstUrl').value.trim();
-  const dstToken = document.getElementById('dstToken').value.trim();
-  const dstSkipTLS = document.getElementById('dstSkipTLS').checked;
-  if (!dstUrl || !dstToken) return alert('Please enter destination URL and token.');
+  const source = migrationApplFromSide('src');
+  const destination = migrationApplFromSide('dst');
+  if (!source.profileId && !source.url) return alert('Configure source (profile or URL).');
+  if (!destination.profileId && !destination.url) return alert('Configure destination (profile or URL).');
+  if (!source.profileId && !source.token && !(source.username && source.password)) {
+    return alert('Source needs a profile, API token, or username and password.');
+  }
+  if (!destination.profileId && !destination.token && !(destination.username && destination.password)) {
+    return alert('Destination needs a profile, API token, or username and password.');
+  }
 
   // Build items list
   const d = state.discovery;
@@ -1574,9 +4721,11 @@ async function startMigration() {
 
   try {
     const res = await api('/api/migrate', 'POST', {
-      source: {url: state.srcUrl, token: state.srcToken, skipTls: state.srcSkipTLS},
-      destination: {url: dstUrl, token: dstToken, skipTls: dstSkipTLS},
+      source,
+      destination,
       items,
+      discoveryId: state.currentDiscoveryId || 0,
+      discoveryTime: state.currentDiscoveryTime || '',
       httpDebug: document.getElementById('httpDebug').checked
     });
 
@@ -1593,6 +4742,7 @@ async function startMigration() {
     document.getElementById('resCreated').textContent = res.created != null ? res.created : 0;
     document.getElementById('resUpdated').textContent = res.updated != null ? res.updated : 0;
 
+    renderResultsCharts(res);
     renderResultRows('all');
   } catch(e) {
     document.getElementById('migrationMsg').textContent = `Error: ${e.message}`;
@@ -1656,21 +4806,40 @@ function buildDiscoveryExportObject() {
   };
 }
 
-function persistSessionToStorage() {
-  const cb = document.getElementById('persistDiscoverySession');
-  if (!cb || !cb.checked || !state.discovery) return;
-  const payload = {
-    v: 1,
+function workflowSessionPayload() {
+  return {
     discovery: state.discovery,
+    discoveryId: state.currentDiscoveryId || 0,
+    source: migrationApplFromSide('src'),
+    selected: [...state.selected],
     srcUrl: state.srcUrl,
     srcToken: state.srcToken,
-    srcSkipTLS: state.srcSkipTLS,
-    selected: [...state.selected]
+    srcSkipTLS: state.srcSkipTLS
   };
+}
+
+async function persistSessionToStorage() {
+  const cb = document.getElementById('persistDiscoverySession');
+  if (!cb || !cb.checked || !state.discovery) return;
+  const payload = { v: 1, ...workflowSessionPayload() };
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
   } catch (e) {
     console.warn('sessionStorage save failed', e);
+  }
+  if (state.storagePostgres) {
+    try {
+      const res = await api('/api/session', 'POST', {
+        id: state.serverSessionId || undefined,
+        data: workflowSessionPayload()
+      });
+      if (res.id) {
+        state.serverSessionId = res.id;
+        localStorage.setItem('morpheus_server_session_id', res.id);
+      }
+    } catch (e) {
+      console.warn('postgres session save failed', e);
+    }
   }
 }
 
@@ -1679,51 +4848,225 @@ function maybePersistSession() {
   if (cb && cb.checked) persistSessionToStorage();
 }
 
+function applyWorkflowSessionData(data) {
+  if (!data.discovery || !data.discovery.categories) {
+    alert('Invalid discovery in saved session.');
+    return false;
+  }
+  state.discovery = data.discovery;
+  state.currentDiscoveryId = Number(data.discoveryId || 0);
+  state.currentDiscoveryTime = (data.discovery && data.discovery.discoveredAt) || '';
+  state.srcUrl = data.srcUrl || (data.source && data.source.url) || '';
+  state.srcToken = data.srcToken || (data.source && data.source.token) || '';
+  state.srcSkipTLS = !!(data.srcSkipTLS || (data.source && data.source.skipTls));
+  state.selected = new Set(Array.isArray(data.selected) ? data.selected : []);
+  state.activeFilter = 'ALL';
+  document.getElementById('srcUrl').value = state.srcUrl;
+  document.getElementById('srcToken').value = state.srcToken;
+  document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
+  document.getElementById('btnDiscover').disabled = false;
+  setStep(3);
+  showView('view-select');
+  renderDiscovery();
+  return true;
+}
+
 function onPersistDiscoveryToggle() {
   const cb = document.getElementById('persistDiscoverySession');
   if (!cb.checked) {
     sessionStorage.removeItem(SESSION_KEY);
+    if (state.storagePostgres && state.serverSessionId) {
+      api('/api/session?id=' + encodeURIComponent(state.serverSessionId), 'DELETE').catch(() => {});
+      state.serverSessionId = '';
+      localStorage.removeItem('morpheus_server_session_id');
+    }
     updateSessionRestoreBanner();
     return;
   }
   persistSessionToStorage();
 }
 
-function updateSessionRestoreBanner() {
+async function updateSessionRestoreBanner() {
   const el = document.getElementById('sessionRestoreBanner');
   if (!el) return;
-  if (sessionStorage.getItem(SESSION_KEY)) el.classList.remove('hidden');
+  let has = !!sessionStorage.getItem(SESSION_KEY);
+  if (!has && state.storagePostgres) {
+    try {
+      const res = await api('/api/session');
+      has = !!(res && res.data && res.data.discovery);
+      if (res.id) state.serverSessionId = res.id;
+    } catch (_) {}
+  }
+  if (has) el.classList.remove('hidden');
   else el.classList.add('hidden');
 }
 
 function clearDiscoverySession() {
   sessionStorage.removeItem(SESSION_KEY);
+  if (state.storagePostgres && state.serverSessionId) {
+    api('/api/session?id=' + encodeURIComponent(state.serverSessionId), 'DELETE').catch(() => {});
+    state.serverSessionId = '';
+    localStorage.removeItem('morpheus_server_session_id');
+  }
   const cb = document.getElementById('persistDiscoverySession');
   if (cb) cb.checked = false;
   updateSessionRestoreBanner();
 }
 
-function restoreDiscoverySession() {
+async function restoreDiscoverySession() {
+  if (state.storagePostgres) {
+    try {
+      const q = state.serverSessionId ? '?id=' + encodeURIComponent(state.serverSessionId) : '';
+      const res = await api('/api/session' + q);
+      if (res && res.data && applyWorkflowSessionData(res.data)) {
+        if (res.id) {
+          state.serverSessionId = res.id;
+          localStorage.setItem('morpheus_server_session_id', res.id);
+        }
+        const cb = document.getElementById('persistDiscoverySession');
+        if (cb) cb.checked = true;
+        updateSessionRestoreBanner();
+        return;
+      }
+    } catch (_) { /* fall through to tab storage */ }
+  }
   const raw = sessionStorage.getItem(SESSION_KEY);
-  if (!raw) return alert('No saved session in this tab.');
+  if (!raw) return alert('No saved session found.');
   let data;
   try { data = JSON.parse(raw); } catch (e) { return alert('Invalid saved session data.'); }
-  if (!data.discovery || !data.discovery.categories) return alert('Invalid discovery in saved session.');
-  state.discovery = data.discovery;
-  state.srcUrl = data.srcUrl || '';
-  state.srcToken = data.srcToken || '';
-  state.srcSkipTLS = !!data.srcSkipTLS;
-  state.selected = new Set(Array.isArray(data.selected) ? data.selected : []);
-  document.getElementById('srcUrl').value = state.srcUrl;
-  document.getElementById('srcToken').value = state.srcToken;
-  document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
+  if (!applyWorkflowSessionData(data)) return;
   const cb = document.getElementById('persistDiscoverySession');
   if (cb) cb.checked = true;
-  document.getElementById('btnDiscover').disabled = false;
-  setStep(3);
-  showView('view-select');
-  renderDiscovery();
   updateSessionRestoreBanner();
+}
+
+function discoveryHistoryBodyIds() {
+  return ['savedDiscoveriesBody', 'profilesSavedDiscoveriesBody'];
+}
+
+function updateSavedDiscoveriesPanelsVisibility() {
+  const show = !!state.storagePostgres;
+  ['savedDiscoveriesPanel', 'profilesSavedDiscoveriesPanel'].forEach((id) => {
+    const p = document.getElementById(id);
+    if (p) p.style.display = show ? '' : 'none';
+  });
+}
+
+async function loadStorageInfo() {
+  try {
+    const d = await api('/api/storage');
+    state.storagePostgres = !!d.postgres;
+  } catch (_) {
+    state.storagePostgres = false;
+  }
+  updateSavedDiscoveriesPanelsVisibility();
+}
+
+function discoveryApplianceName(d) {
+  if (d.applianceName) return d.applianceName;
+  if (d.sourceProfileId) {
+    const p = profilesCache.find(x => x.id === d.sourceProfileId);
+    if (p && p.name) return p.name;
+  }
+  return d.sourceUrl || '—';
+}
+
+function renderDiscoveryHistoryRows() {
+  const rows = Array.isArray(state.discoveryHistory) ? state.discoveryHistory : [];
+  const html = !rows.length
+    ? '<tr><td colspan="6" style="color:var(--text3);">No saved discovery runs found.</td></tr>'
+    : rows.map((d) => {
+    const ts = d.createdAt ? new Date(d.createdAt) : null;
+    const when = ts && !isNaN(ts.getTime()) ? ts.toLocaleString() : (d.createdAt || 'unknown');
+    const appliance = discoveryApplianceName(d);
+    const source = d.sourceUrl || d.sourceProfileId || 'n/a';
+    const total = Number(d.totalItems || 0);
+    const cats = Number(d.categories || 0);
+    const usedBy = Number(d.migrationRuns || 0);
+    const danger = usedBy > 0;
+    return `<tr>
+      <td>${escapeHtml(when)}</td>
+      <td style="font-weight:600;">${escapeHtml(appliance)}</td>
+      <td>${total} items / ${cats} categories</td>
+      <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(source)}">${escapeHtml(source)}</td>
+      <td>${usedBy}</td>
+      <td>
+        <button class="btn btn-secondary" style="margin-right:8px;" onclick="loadDiscoveryFromHistory(${Number(d.id || 0)})">Load</button>
+        <button class="btn btn-secondary" ${danger ? 'style="border-color:rgba(239,68,68,.45);color:#fca5a5;"' : ''} onclick="deleteDiscoveryFromHistory(${Number(d.id || 0)}, ${usedBy})">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+  discoveryHistoryBodyIds().forEach((id) => {
+    const body = document.getElementById(id);
+    if (body) body.innerHTML = html;
+  });
+}
+
+async function loadDiscoveryHistory() {
+  if (!state.storagePostgres) return;
+  try {
+    const res = await api('/api/discoveries?limit=200');
+    state.discoveryHistory = Array.isArray(res.discoveries) ? res.discoveries : [];
+    renderDiscoveryHistoryRows();
+  } catch (e) {
+    const errHtml = `<tr><td colspan="6" style="color:var(--error);">${escapeHtml(e.message || 'failed to load')}</td></tr>`;
+    discoveryHistoryBodyIds().forEach((id) => {
+      const body = document.getElementById(id);
+      if (body) body.innerHTML = errHtml;
+    });
+  }
+}
+
+async function loadDiscoveryFromHistory(id) {
+  const recId = Number(id || 0);
+  if (recId <= 0) return;
+  try {
+    const res = await api('/api/discoveries?id=' + encodeURIComponent(String(recId)));
+    const record = res && res.record ? res.record : null;
+    if (!record || !record.discovery || !record.discovery.categories) {
+      alert('Selected discovery does not contain valid data.');
+      return;
+    }
+    state.discovery = record.discovery;
+    state.currentDiscoveryId = recId;
+    state.currentDiscoveryTime = (record.discovery && record.discovery.discoveredAt) || record.createdAt || '';
+    state.srcProfileId = (record.source && record.source.profileId) || '';
+    state.srcUrl = (record.source && record.source.url) || '';
+    state.srcSkipTLS = !!(record.source && record.source.skipTls);
+    state.selected = new Set();
+    state.activeFilter = 'ALL';
+    if (document.getElementById('srcUrl')) document.getElementById('srcUrl').value = state.srcUrl;
+    if (document.getElementById('srcSkipTLS')) document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
+    if (document.getElementById('srcProfileSelect') && state.srcProfileId) {
+      document.getElementById('srcProfileSelect').value = state.srcProfileId;
+      loadProfile('src', state.srcProfileId);
+    }
+    if (state.appMode !== 'migration') setAppMode('migration');
+    setStep(3);
+    showView('view-select');
+    renderDiscovery();
+  } catch (e) {
+    alert('Failed to load discovery: ' + e.message);
+  }
+}
+
+async function deleteDiscoveryFromHistory(id, usedBy) {
+  const recId = Number(id || 0);
+  if (recId <= 0) return;
+  const count = Number(usedBy || 0);
+  const prompt = count > 0
+    ? `This discovery is referenced by ${count} migration run(s). Delete anyway?`
+    : 'Delete this saved discovery snapshot?';
+  if (!confirm(prompt)) return;
+  try {
+    await api('/api/discoveries?id=' + encodeURIComponent(String(recId)), 'DELETE');
+    if (state.currentDiscoveryId === recId) {
+      state.currentDiscoveryId = 0;
+    }
+    await loadDiscoveryHistory();
+  } catch (e) {
+    alert('Failed to delete discovery: ' + e.message);
+  }
 }
 
 function discoveryDownloadJSON() {
@@ -1760,27 +5103,40 @@ async function discoverySaveToFolder() {
   }
 }
 
-function discoveryLoadFromFile(ev) {
-  const f = ev.target.files && ev.target.files[0];
-  if (ev.target) ev.target.value = '';
+function applyDiscoveryExport(o) {
+  const disc = o.discovery;
+  if (!disc || !disc.categories) throw new Error('File must contain a "discovery" object from this tool.');
+  state.discovery = disc;
+  state.currentDiscoveryId = 0;
+  state.currentDiscoveryTime = disc.discoveredAt || '';
+  state.srcUrl = o.sourceUrl || (document.getElementById('srcUrl') && document.getElementById('srcUrl').value) || '';
+  state.srcSkipTLS = !!o.sourceSkipTLS;
+  state.selected = new Set(Array.isArray(o.selectedKeys) ? o.selectedKeys : []);
+  state.activeFilter = 'ALL';
+  const urlEl = document.getElementById('srcUrl');
+  const tlsEl = document.getElementById('srcSkipTLS');
+  if (urlEl) urlEl.value = state.srcUrl;
+  if (tlsEl) tlsEl.checked = state.srcSkipTLS;
+  const btn = document.getElementById('btnDiscover');
+  if (btn) btn.disabled = false;
+  setStep(3);
+  showView('view-select');
+  renderDiscovery();
+}
+
+function discoveryLoadFromFile(ev, source) {
+  const input = ev.target;
+  const f = input.files && input.files[0];
+  if (input) input.value = '';
   if (!f) return;
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const o = JSON.parse(reader.result);
-      const disc = o.discovery;
-      if (!disc || !disc.categories) throw new Error('File must contain a "discovery" object from this tool.');
-      state.discovery = disc;
-      state.srcUrl = o.sourceUrl || document.getElementById('srcUrl').value || '';
-      state.srcSkipTLS = !!o.sourceSkipTLS;
-      if (Array.isArray(o.selectedKeys)) state.selected = new Set(o.selectedKeys);
-      document.getElementById('srcUrl').value = state.srcUrl;
-      document.getElementById('srcSkipTLS').checked = state.srcSkipTLS;
-      document.getElementById('btnDiscover').disabled = false;
-      setStep(3);
-      showView('view-select');
-      renderDiscovery();
-      alert('Discovery loaded from file. Enter your API token on the source step if this export did not include one.');
+      applyDiscoveryExport(JSON.parse(reader.result));
+      const msg = source === 'connect'
+        ? 'Discovery loaded. Select items, then destination. Add your source API token above if the migration still needs the live appliance.'
+        : 'Discovery loaded from file. Add your API token on the source step if this export did not include one.';
+      alert(msg);
     } catch (err) {
       alert('Could not load file: ' + err.message);
     }
@@ -1788,120 +5144,79 @@ function discoveryLoadFromFile(ev) {
   reader.readAsText(f);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadStorageInfo();
+  if (state.storagePostgres) {
+    loadDiscoveryHistory();
+  }
   updateSessionRestoreBanner();
   loadAppVersion();
+  await loadProfilesList();
+  if (state.storagePostgres) {
+    loadFleetDiscoveredFromServer(true);
+  }
+  toggleSideAuthFields('src');
+  toggleSideAuthFields('dst');
+  toggleProfileAuthFields();
 });
 
 async function loadAppVersion() {
   const el = document.getElementById('appVersion');
-  if (!el) return;
+  const side = document.getElementById('appVersionSidebar');
+  const apply = (v) => {
+    const t = v.startsWith('v') ? v : 'v' + v;
+    if (el) el.textContent = t;
+    if (side) side.textContent = t;
+  };
+  if (!el && !side) return;
   try {
     const r = await fetch('/api/version');
     if (!r.ok) return;
     const d = await r.json();
     if (!d || d.version == null || String(d.version).trim() === '') return;
-    const v = String(d.version).trim();
-    el.textContent = v.startsWith('v') ? v : 'v' + v;
+    apply(String(d.version).trim());
   } catch (_) {
     /* leave placeholder */
   }
 }
 
-// ─── Profiles ─────────────────────────────────────────────────────────────────
-let profilesCache = [];
-
-async function loadProfilesList() {
-  try {
-    const res = await api('/api/profiles');
-    profilesCache = res.profiles || [];
-    refreshProfileDropdowns();
-  } catch(e) {
-    console.warn('Could not load profiles:', e.message);
-  }
-}
-
-function refreshProfileDropdowns() {
-  ['src', 'dst'].forEach(side => {
-    const sel = document.getElementById(side + 'ProfileSelect');
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = '<option value="">— select a profile —</option>';
-    profilesCache.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name;
-      sel.appendChild(opt);
-    });
-    if (current) sel.value = current;
-  });
-}
-
-function loadProfile(side, id) {
-  if (!id) return;
-  const p = profilesCache.find(p => p.id === id);
-  if (!p) return;
-  document.getElementById(side + 'Url').value = p.url;
-  document.getElementById(side + 'Token').value = p.token;
-  document.getElementById(side + 'SkipTLS').checked = p.skipTls;
-  if (side === 'src') {
-    document.getElementById('btnDiscover').disabled = false;
-  }
-}
-
 function promptSaveProfile(side) {
-  document.getElementById(side + 'SaveRow').classList.remove('hidden');
-  document.getElementById(side + 'ProfileName').focus();
-}
-
-function cancelSave(side) {
-  document.getElementById(side + 'SaveRow').classList.add('hidden');
-  document.getElementById(side + 'ProfileName').value = '';
-}
-
-async function saveProfile(side) {
-  const name = document.getElementById(side + 'ProfileName').value.trim();
-  const url  = document.getElementById(side + 'Url').value.trim();
-  const token = document.getElementById(side + 'Token').value.trim();
+  setAppMode('fleet');
+  setFleetSubView('add');
+  const url = document.getElementById(side + 'Url').value.trim();
   const skipTls = document.getElementById(side + 'SkipTLS').checked;
-
-  if (!name) { alert('Please enter a profile name.'); return; }
-  if (!url || !token) { alert('URL and token must be filled in before saving.'); return; }
-
-  // If the currently selected profile has the same name, update it (pass its id)
-  const sel = document.getElementById(side + 'ProfileSelect');
-  const existingId = sel.value || '';
-  const existing = profilesCache.find(p => p.id === existingId);
-  const id = (existing && existing.name === name) ? existingId : '';
-
-  try {
-    const saved = await api('/api/profiles/save', 'POST', {id, name, url, token, skipTls});
-    cancelSave(side);
-    await loadProfilesList();
-    // Select the just-saved profile
-    document.getElementById(side + 'ProfileSelect').value = saved.id;
-  } catch(e) {
-    alert('Failed to save profile: ' + e.message);
+  resetProfileFormFields();
+  document.getElementById('profileUrl').value = url;
+  document.getElementById('profileSkipTLS').checked = skipTls;
+  if (sideAuthType(side) === 'password') {
+    document.querySelector('input[name="profileAuth"][value="password"]').checked = true;
+    document.getElementById('profileUsername').value = document.getElementById(side + 'Username').value.trim();
+    document.getElementById('profilePassword').value = document.getElementById(side + 'Password').value;
+  } else {
+    document.querySelector('input[name="profileAuth"][value="token"]').checked = true;
+    document.getElementById('profileToken').value = document.getElementById(side + 'Token').value.trim();
   }
+  toggleProfileAuthFields();
+  const sel = document.getElementById(side + 'ProfileSelect');
+  if (sel && sel.value) {
+    const p = profilesCache.find(x => x.id === sel.value);
+    if (p) {
+      document.getElementById('profileEditId').value = p.id;
+      document.getElementById('profileName').value = p.name;
+      document.getElementById('profileFormTitle').textContent = 'Edit appliance';
+      document.getElementById('btnProfileCancelEdit').classList.remove('hidden');
+    }
+  }
+  document.getElementById('profileName').focus();
 }
 
 async function deleteProfile(side) {
   const sel = document.getElementById(side + 'ProfileSelect');
   const id = sel.value;
   if (!id) { alert('Select a profile to delete first.'); return; }
-  const p = profilesCache.find(p => p.id === id);
-  if (!confirm(`Delete profile "${p ? p.name : id}"?`)) return;
-  try {
-    await api('/api/profiles/delete?id=' + encodeURIComponent(id), 'DELETE');
-    sel.value = '';
-    await loadProfilesList();
-  } catch(e) {
-    alert('Failed to delete profile: ' + e.message);
-  }
+  await deleteProfileById(id);
+  sel.value = '';
 }
-
-// Load profiles on page load
-loadProfilesList();
 
 </script>
 </body>

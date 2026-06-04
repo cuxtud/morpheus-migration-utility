@@ -1,21 +1,64 @@
 # Morpheus Snapshot Utility 🔄
 
-A self-contained migration tool for HPE Morpheus — discovers all resources on a source appliance, lets you cherry-pick what to migrate, then copies selected items to a destination appliance.
+A self-contained tool for HPE Morpheus — **fleet inventory** across many appliances (discovery, license, health) and **migration** from a source appliance to a destination.
 
 ## Features
 
-- **Full discovery** across all Morpheus resource types:
-  - Clouds, Integrations (Git, Ansible, ServiceNow, etc.)
-  - Instances, Virtual Images, Instance Types, Layouts, Node Types
-  - Tasks, Workflows, Catalog Items, Blueprints, Apps
-  - Tenants, Roles, Users, Policies, Groups
-  - Networks, Network Pools, Network Domains
-  - Credentials, Storage, Monitors, Clusters, Cypher
+### Appliance profiles (shared)
+- **Appliance profiles** are saved once and used in both **Migration** and **Fleet inventory**
+- Auth per profile: **API token** or **username + password** (OAuth via `morph-api`)
+- **PostgreSQL (JSONB)** when `DATABASE_URL` is set — profiles + full discovery snapshots persist across restarts
+- Without Postgres: `appliance-profiles.json` (mode `0600`) and in-memory discovery cache; legacy `connections.json` / `appliances.json` merge on first run
+
+### Fleet inventory (multi-appliance)
+- Pick a saved profile or **discover all** profiles: resource inventory, **`GET /api/license`**, and health (`/api/health` where available)
+- Dashboard cards per appliance: resource counts, license summary, health status
+
+### Migration
+- **Discovery** across Morpheus library and automation types:
+  - Clouds, Integrations, Instance Types, Layouts, Node Types
+  - Tasks, Workflows, Inputs, Option Lists, Forms
+  - Catalog Items, Blueprints, Apps
+  - Tenants, Roles, Users, Policies, Groups, Cypher
 - **Grouped checkbox UI** — select individual items or entire categories
 - **Live search & filter** across discovered items
 - **Migration with results** — per-item success/skip/fail with export to JSON
 - **Single binary** — no runtime, no Docker, no dependencies
 - **HTTPS on port 443** — auto-generates a self-signed TLS cert on first run
+
+---
+
+## PostgreSQL storage
+
+Discovery snapshots and appliance profiles are stored in Postgres when you set **`DATABASE_URL`**.
+
+```bash
+# Local database (Docker)
+docker compose up -d postgres
+export DATABASE_URL=postgres://morpheus:morpheus@localhost:5432/morpheus_snapshot?sslmode=disable
+
+# Run the server (schema is applied automatically on startup)
+go run ./cmd/server
+```
+
+All persisted rows use a **`data` JSONB** column (full document). Tables (created automatically):
+
+| Table | JSONB document |
+|-------|----------------|
+| `appliance_profiles` | Full profile (name, url, token, password, skipTls) |
+| `appliance_discoveries` | Full `ApplianceSnapshot` (discovery + license + health) |
+| `migration_discoveries` | Source connection + `DiscoveryResult` from migration wizard |
+| `migration_runs` | Migration request + results |
+| `workflow_sessions` | Saved migration UI state (discovery, selection, source) |
+
+On first connect with an empty database, existing `appliance-profiles.json` is imported once.
+
+APIs:
+- `GET /api/profiles/snapshots` — latest fleet discovery per profile
+- `GET/POST/DELETE /api/session` — workflow session in Postgres (UI “Remember discovery” when `DATABASE_URL` is set)
+- `GET /api/storage` — `{ "postgres": true, "jsonb": true }`
+
+Copy [`.env.example`](.env.example) for local settings.
 
 ---
 
@@ -78,10 +121,11 @@ sudo journalctl -u morpheus-snapshot -f
 ## Usage Walkthrough
 
 ### Step 1 — Connect Source
-Enter your source Morpheus appliance URL and API token.
+Choose a saved **appliance profile**, or enter URL with **API token** or **username & password**.
 
 > API token location: **User Settings → API Access → Regenerate** in Morpheus UI.
 > Administrator-level token recommended for full discovery.
+> Manage profiles under **Appliance profiles** in the sidebar (shared with Fleet).
 
 Click **Test Connection** to verify, then **Connect & Discover**.
 
@@ -96,7 +140,7 @@ The tool queries ~25 endpoints in parallel. Non-admin tokens may get 403s on som
 - **Select All Visible** respects the current search filter
 
 ### Step 4 — Destination
-Enter destination appliance credentials. The migration preview shows exactly what will be created.
+Choose a destination **appliance profile** or enter credentials inline. The migration preview shows exactly what will be created.
 
 ### Step 5 — Results
 Per-item status: **success**, **skipped** (already exists), or **failed** (error detail shown).
