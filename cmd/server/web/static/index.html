@@ -1806,7 +1806,7 @@
       <div class="panel">
         <div class="panel-title">Relation view</div>
         <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
-          Dependency graph for a discovered item. Instance types show layouts and inputs; layouts show inputs, workflows, and node types; node types show virtual images.
+          Dependency graph for a discovered item. Instance types show layouts and inputs; layouts show inputs, workflows, and node types; node types show virtual images; forms show library inputs and catalog items.
         </p>
         <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
           <button type="button" class="btn btn-secondary" onclick="setFleetSubView('appliances')">← Back to appliances</button>
@@ -3704,7 +3704,8 @@ function relationsPanelForItem(item, discovery) {
   if (t === 'layout') return layoutRelationsFromDiscovery(item, itemRaw, discovery);
   if (t === 'nodetype') return nodeTypeRelationsFromDiscovery(item, itemRaw, discovery);
   if (t === 'virtualimage') return virtualImageRelationsFromDiscovery(item, itemRaw, discovery);
-  return '<div class="alert info"><span>ℹ</span><span>Relation extraction is available for instance types, layouts, node types, virtual images, tasks, workflows, integrations, catalogs, inputs, and option lists.</span></div>';
+  if (t === 'form') return formRelationsFromDiscovery(item, itemRaw, discovery);
+  return '<div class="alert info"><span>ℹ</span><span>Relation extraction is available for instance types, layouts, node types, virtual images, forms, tasks, workflows, integrations, catalogs, inputs, and option lists.</span></div>';
 }
 
 async function openMigrationRelations(catName, itemId) {
@@ -4296,8 +4297,83 @@ function relationTypeSubLabel(typeNorm) {
     workflow: 'Workflow',
     nodetype: 'Node Type',
     virtualimage: 'Virtual Image',
+    form: 'Form',
+    catalogitem: 'Catalog Item',
+    optionlist: 'Option List',
+    integration: 'Integration',
+    task: 'Task',
   };
   return labels[typeNorm] || typeNorm;
+}
+
+function isLikelyUUID(s) {
+  s = String(s || '').trim().toLowerCase();
+  if (s.length !== 36 || (s.match(/-/g) || []).length !== 4) return false;
+  return /^[0-9a-f-]+$/.test(s.replace(/-/g, ''));
+}
+
+function walkFormOptions(form, fn) {
+  (form.options || []).forEach(opt => {
+    if (opt && typeof opt === 'object') fn('', opt);
+  });
+  (form.fieldGroups || []).forEach(g => {
+    if (!g || typeof g !== 'object') return;
+    const gcode = String(g.code || g.name || '').trim();
+    (g.options || []).forEach(opt => {
+      if (opt && typeof opt === 'object') fn(gcode, opt);
+    });
+  });
+}
+
+function isFormLibraryInputRef(opt) {
+  if (!opt || typeof opt !== 'object') return false;
+  if (Object.prototype.hasOwnProperty.call(opt, 'formField')) {
+    return opt.formField === false;
+  }
+  const typ = String(opt.type || '').trim();
+  const fieldName = String(opt.fieldName || '').trim();
+  const name = String(opt.name || '').trim();
+  const id = Number(opt.id || 0);
+  if (id > 0 && !typ && !fieldName && !name) return true;
+  if (!name) return false;
+  return !isLikelyUUID(name);
+}
+
+function extractFormLibraryInputRefs(formRaw) {
+  const refs = [];
+  const seen = new Set();
+  walkFormOptions(formRaw, (groupCode, opt) => {
+    if (!groupCode) return;
+    if (!isFormLibraryInputRef(opt)) return;
+    const id = Number(opt.id || 0);
+    const name = String(opt.name || opt.fieldLabel || opt.code || opt.fieldName || '').trim();
+    const code = String(opt.code || opt.fieldName || '').trim();
+    const key = id > 0 ? `id:${id}` : `code:${code.toLowerCase()}`;
+    if (key === 'code:' || key === 'id:0') return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push({ id, name: name || code || `input #${id}`, code, groupCode });
+  });
+  return refs;
+}
+
+function catalogItemsUsingForm(formItem, formRaw, byType) {
+  const formId = Number(formItem?.id || formRaw?.id || 0);
+  const formCode = String(formRaw?.code || '').trim().toLowerCase();
+  const matchesRef = (ref) => {
+    if (!ref || typeof ref !== 'object') return false;
+    if (formId > 0 && Number(ref.id) === formId) return true;
+    const code = String(ref.code || '').trim().toLowerCase();
+    if (formCode && code === formCode) return true;
+    const name = String(ref.name || '').trim().toLowerCase();
+    const formName = String(formRaw?.name || formItem?.name || '').trim().toLowerCase();
+    return formName && name === formName;
+  };
+  return (byType.get('catalogitem') || []).filter(cat => {
+    const raw = parseJsonSafe(cat.rawJson);
+    if (matchesRef(raw.optionTypeForm) || matchesRef(raw.form)) return true;
+    return (raw.optionTypeForms || []).some(matchesRef);
+  });
 }
 
 function graphNodeFromDiscoveryItem(discItem, level, typeNorm) {
@@ -4724,6 +4800,104 @@ function nodeTypeRelationsFromDiscovery(item, nodeRaw, discovery) {
 
   return `<div class="panel" style="margin-top:10px;">
     <div class="panel-title" style="font-size:14px;">Node type relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function formRelationsFromDiscovery(item, formRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const inputRefs = extractFormLibraryInputRefs(formRaw);
+  const libraryInputs = discoveryItemsForRefs(inputRefs, 'input', byType);
+  const catalogs = catalogItemsUsingForm(item, formRaw, byType);
+
+  const optionListItems = [];
+  const seenOL = new Set();
+  const addOptionList = (olRef) => {
+    if (!olRef || typeof olRef !== 'object') return;
+    const hit = resolveRefFromDiscovery(olRef, 'optionlist', byType, olRef.name || olRef.code);
+    if (!hit) return;
+    const k = String(hit.id);
+    if (seenOL.has(k)) return;
+    seenOL.add(k);
+    optionListItems.push(hit);
+  };
+  walkFormOptions(formRaw, (groupCode, opt) => {
+    if (!groupCode || !isFormLibraryInputRef(opt)) return;
+    if (opt.optionList) addOptionList(opt.optionList);
+  });
+  libraryInputs.forEach(inp => {
+    const ir = parseJsonSafe(inp.rawJson);
+    if (ir.optionList) addOptionList(ir.optionList);
+  });
+
+  const unresolvedInputs = inputRefs.filter(ref =>
+    !libraryInputs.find(x => Number(x.id) === Number(ref.id))
+  );
+  const inlineCount = (formRaw.options || []).length;
+
+  const rows = [
+    relationListRow('Inputs (library, via field groups)', libraryInputs, 'none found in discovery'),
+    relationListRow('Option lists (via inputs)', optionListItems, 'none'),
+    relationListRow('Catalog items', catalogs, 'none found in discovery'),
+  ];
+  if (unresolvedInputs.length) {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Inputs (not in discovery):</strong> ${
+      unresolvedInputs.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ')
+    }</div>`);
+  }
+  if (inlineCount > 0) {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Form fields (inline):</strong> ${inlineCount} in top-level <code>options</code></div>`);
+  }
+
+  const rootId = `form-${item.id || 0}`;
+  const graphNodes = [];
+  const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: discoveryDisplayName(item) || item.name || 'Form',
+    sub: `Form #${item.id || ''}`,
+    level: 0,
+    clickType: 'form',
+    clickId: item.id || 0,
+  });
+
+  libraryInputs.forEach(inp => {
+    const inId = `input-${inp.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(inp, 1, 'input'));
+    graphEdges.push({ from: rootId, to: inId });
+    const ir = parseJsonSafe(inp.rawJson);
+    if (ir.optionList) {
+      const olHit = resolveRefFromDiscovery(ir.optionList, 'optionlist', byType);
+      if (olHit) {
+        const olId = `optionlist-${olHit.id}`;
+        ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(olHit, 2, 'optionlist'));
+        graphEdges.push({ from: inId, to: olId });
+      }
+    }
+  });
+
+  unresolvedInputs.forEach(ref => {
+    if (!ref.id) return;
+    const inId = `input-${ref.id}`;
+    ensureGraphNode(graphNodes, seenNodes, {
+      id: inId,
+      label: ref.name || `Input #${ref.id}`,
+      sub: `Input #${ref.id}`,
+      level: 1,
+    });
+    graphEdges.push({ from: rootId, to: inId });
+  });
+
+  catalogs.forEach(cat => {
+    const catId = `catalogitem-${cat.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(cat, 1, 'catalogitem'));
+    graphEdges.push({ from: rootId, to: catId });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Form relations</div>
     ${rows.join('')}
     ${renderRelationGraph(graphNodes, graphEdges)}
   </div>`;
