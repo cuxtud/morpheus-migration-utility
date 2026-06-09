@@ -19,6 +19,9 @@ type MigrateRequest struct {
 	// HttpDebug logs each Morpheus HTTP request (method, URL, JSON body) to the snapshot server stderr/log.
 	// Does not appear in the browser; enable via migration UI checkbox or JSON httpDebug: true.
 	HttpDebug bool `json:"httpDebug"`
+	// ParallelCatalog controls concurrent catalog item migration after dependencies complete.
+	// 0 = auto (up to 4 workers when multiple catalog items), 1 = sequential, N = worker count.
+	ParallelCatalog int `json:"parallelCatalog,omitempty"`
 }
 
 type ApplInfo struct {
@@ -28,6 +31,11 @@ type ApplInfo struct {
 	Username  string `json:"username,omitempty"`
 	Password  string `json:"password,omitempty"`
 	SkipTLS   bool   `json:"skipTls"`
+}
+
+// ClientFromApplInfo builds a Morpheus API client from migration appliance credentials.
+func ClientFromApplInfo(a ApplInfo) (*morpheus.Client, error) {
+	return clientFromApplInfo(a)
 }
 
 func clientFromApplInfo(a ApplInfo) (*morpheus.Client, error) {
@@ -91,12 +99,9 @@ var endpointMap = map[string]endpointSpec{
 	"workflow":      {"/api/task-sets", "taskSet", []string{"id", "dateCreated", "lastUpdated", "account", "accountId"}},
 	"layout":        {"/api/library/layouts", "layout", []string{"id", "dateCreated", "lastUpdated", "account", "accountId", "instanceTypeLayout"}},
 	"nodeType":      {"/api/library/container-types", "containerType", []string{"id", "dateCreated", "lastUpdated", "account", "accountId"}},
-	"instanceType":  {"/api/library/instance-types", "instanceType", []string{"id", "dateCreated", "lastUpdated", "account", "instanceTypeLayouts"}},
-	"catalogItem":   {"/api/catalog-item-types", "catalogItemType", []string{"id", "dateCreated", "lastUpdated", "account"}},
 	"blueprint":     {"/api/blueprints", "blueprint", []string{"id", "dateCreated", "lastUpdated", "account", "visibility"}},
 	"credential":    {"/api/credentials", "credential", []string{"id", "dateCreated", "lastUpdated", "account"}},
 	"storageBucket": {"/api/storage-buckets", "storageBucket", []string{"id", "dateCreated", "lastUpdated"}},
-	"cypher":        {"/api/cypher", "cypher", []string{"id", "dateCreated", "lastUpdated"}},
 	"network":       {"/api/networks", "network", []string{"id", "dateCreated", "lastUpdated", "zone"}},
 	"networkPool":   {"/api/networks/pools", "networkPool", []string{"id", "dateCreated", "lastUpdated"}},
 	"networkDomain": {"/api/networks/domains", "networkDomain", []string{"id", "dateCreated", "lastUpdated"}},
@@ -104,7 +109,18 @@ var endpointMap = map[string]endpointSpec{
 }
 
 func Run(req MigrateRequest) *MigrateResult {
+	return RunWithProgress(req, nil)
+}
+
+func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 	result := &MigrateResult{}
+	emit := func(ev ProgressEvent) {
+		if progress != nil {
+			progress(ev)
+		}
+	}
+	emit(ProgressEvent{Phase: "preparing", Message: "Connecting to destination appliance…"})
+
 	dst, err := clientFromApplInfo(req.Destination)
 	if err != nil {
 		result := &MigrateResult{}
@@ -128,11 +144,14 @@ func Run(req MigrateRequest) *MigrateResult {
 			return result
 		}
 		src.HTTPDebug = req.HttpDebug
+		emit(ProgressEvent{Phase: "preparing", Message: "Connected to source and destination"})
 	}
 
 	state := newAutomationState()
+	state.progress = progress
 	items := req.Items
 	if src != nil {
+		emit(ProgressEvent{Phase: "preparing", Message: "Expanding migration dependencies…"})
 		expanded, depErrs := expandMigrationDependencies(src, req.Items)
 		items = expanded
 		for _, msg := range depErrs {
@@ -144,83 +163,42 @@ func Run(req MigrateRequest) *MigrateResult {
 			})
 		}
 	}
+	items = filterItemsForInstanceTypeOrchestration(items)
 	items = sortItemsForMigration(items)
 
-	for _, item := range items {
-		switch item.Type {
-		case "task":
-			appendItemResult(result, migrateTaskWithAutomation(src, dst, item, state))
-			continue
-		case "workflow":
-			appendItemResult(result, migrateWorkflowWithAutomation(src, dst, item, state))
-			continue
-		case "input":
-			appendItemResult(result, migrateInputWithAutomation(src, dst, item, state))
-			continue
-		case "form":
-			appendItemResult(result, migrateFormWithAutomation(src, dst, item, state))
-			continue
-		default:
-		}
+	queue := make([]string, len(items))
+	for i, it := range items {
+		queue[i] = itemQueueLabel(it)
+	}
+	emit(ProgressEvent{
+		Phase:   "queue",
+		Message: fmt.Sprintf("Migration queue ready (%d items)", len(items)),
+		Queue:   queue,
+		Total:   len(items),
+	})
 
-		spec, ok := endpointMap[item.Type]
-		if !ok {
-			result.Results = append(result.Results, ItemResult{
-				Name:    item.Name,
-				Type:    item.Type,
-				Status:  "skipped",
-				Message: fmt.Sprintf("Migration of type '%s' not yet supported", item.Type),
-			})
-			result.Failed++
-			continue
-		}
+	total := len(items)
+	rec := newMigrationRecorder(result, emit)
+	serialItems, catalogItems := partitionCatalogItems(items)
+	workers := catalogParallelWorkers(req, len(catalogItems))
 
-		var payload []byte
-		if item.Type == "nodeType" {
-			payload, err = buildNodeTypePayloadWithVirtualImage(dst, item.RawJSON, spec)
-		} else {
-			payload, err = buildPayload(item.RawJSON, spec)
-		}
-		if err != nil {
-			status := "error"
-			if item.Type == "nodeType" && strings.Contains(strings.ToLower(err.Error()), "virtual image") {
-				status = "blocked"
-			}
-			appendItemResult(result, ItemResult{
-				Name:    item.Name,
-				Type:    item.Type,
-				Status:  status,
-				Message: fmt.Sprintf("Failed to build payload: %v", err),
-			})
-			continue
-		}
+	for i, item := range serialItems {
+		rec.runItem(src, dst, state, item, i+1, total)
+	}
 
-		_, err = dst.PostRaw(spec.endpoint, payload)
-		if err != nil {
-			if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "422") {
-				appendItemResult(result, ItemResult{
-					Name:    item.Name,
-					Type:    item.Type,
-					Status:  "skipped",
-					Message: "Already exists on destination",
-				})
-				continue
-			}
-			appendItemResult(result, ItemResult{
-				Name:    item.Name,
-				Type:    item.Type,
-				Status:  "error",
-				Message: err.Error(),
-			})
-			continue
-		}
+	if len(catalogItems) == 0 {
+		return result
+	}
 
-		appendItemResult(result, ItemResult{
-			Name:    item.Name,
-			Type:    item.Type,
-			Status:  "success",
-			Outcome: "created",
-		})
+	base := len(serialItems)
+	if workers > 1 {
+		rec.doneCount.Store(0)
+		rec.runCatalogItemsParallel(src, dst, catalogItems, workers, total, base)
+		return result
+	}
+
+	for i, item := range catalogItems {
+		rec.runItem(src, dst, state, item, base+i+1, total)
 	}
 
 	return result
@@ -239,6 +217,10 @@ func normalizeType(t string) string {
 		return "layout"
 	case "nodetype", "containertype":
 		return "nodeType"
+	case "catalogitem":
+		return "catalogItem"
+	case "cloud", "zone":
+		return "cloud"
 	case "workflow", "taskset":
 		return "workflow"
 	default:
@@ -312,6 +294,11 @@ func extractLayoutDeps(layout map[string]interface{}) (nodeTypeIDs []int64, work
 	}
 
 	// Workflow references appear under taskSet/workflow/provisionWorkflow in different payloads.
+	if arr, ok := layout["taskSets"].([]interface{}); ok {
+		for _, e := range arr {
+			addID(&workflowIDs, objectID(e))
+		}
+	}
 	addID(&workflowIDs, objectID(layout["taskSet"]))
 	addID(&workflowIDs, objectID(layout["workflow"]))
 	addID(&workflowIDs, objectID(layout["provisionWorkflow"]))
@@ -344,48 +331,82 @@ func extractInstanceTypeLayoutIDs(obj map[string]interface{}) []int64 {
 	return out
 }
 
-func fetchSourceByID(src *morpheus.Client, typ string, id int64) (SelectedItem, error) {
-	type endpoint struct {
-		path string
-		key  string
-		cat  string
+// FetchFullNodeType loads a complete container type record from the source appliance.
+func FetchFullNodeType(src *morpheus.Client, id int64) (map[string]interface{}, error) {
+	item, err := fetchSourceByID(src, "nodeType", id)
+	if err != nil {
+		return nil, err
 	}
-	var ep endpoint
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(item.RawJSON), &obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func fetchSourceByID(src *morpheus.Client, typ string, id int64) (SelectedItem, error) {
 	switch normalizeType(typ) {
 	case "layout":
-		ep = endpoint{path: fmt.Sprintf("/api/library/layouts/%d", id), key: "layout", cat: "Layouts"}
+		return fetchSourceResource(src,
+			fmt.Sprintf("/api/library/layouts/%d", id),
+			"Layouts", "layout",
+			[]string{"instanceTypeLayout", "layout"},
+		)
 	case "nodeType":
-		ep = endpoint{path: fmt.Sprintf("/api/library/container-types/%d", id), key: "containerType", cat: "Node Types"}
+		return fetchSourceResource(src,
+			fmt.Sprintf("/api/library/container-types/%d", id),
+			"Node Types", "nodeType",
+			[]string{"containerType"},
+		)
 	case "workflow":
-		ep = endpoint{path: fmt.Sprintf("/api/task-sets/%d", id), key: "taskSet", cat: "Workflows"}
+		return fetchSourceResource(src,
+			fmt.Sprintf("/api/task-sets/%d", id),
+			"Workflows", "workflow",
+			[]string{"taskSet"},
+		)
 	default:
 		return SelectedItem{}, fmt.Errorf("unsupported dependency type %q", typ)
 	}
-	body, err := src.GetRaw(ep.path)
+}
+
+func fetchSourceResource(src *morpheus.Client, path, category, typ string, wrapperKeys []string) (SelectedItem, error) {
+	body, err := src.GetRaw(path)
 	if err != nil {
 		return SelectedItem{}, err
 	}
-	var wrap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &wrap); err != nil {
+	raw, key, err := unwrapFirstJSONKey(body, wrapperKeys)
+	if err != nil {
 		return SelectedItem{}, err
 	}
-	raw, ok := wrap[ep.key]
-	if !ok {
-		return SelectedItem{}, fmt.Errorf("source response missing %q", ep.key)
-	}
+	_ = key
 	obj := map[string]interface{}{}
-	_ = json.Unmarshal(raw, &obj)
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return SelectedItem{}, err
+	}
 	name := stringFromAny(obj["name"])
 	if name == "" {
 		name = stringFromAny(obj["code"])
 	}
 	return SelectedItem{
-		Category: ep.cat,
+		Category: category,
 		Type:     normalizeType(typ),
 		ID:       intFromAny(obj["id"]),
 		Name:     name,
 		RawJSON:  string(raw),
 	}, nil
+}
+
+func unwrapFirstJSONKey(body []byte, keys []string) (json.RawMessage, string, error) {
+	var wrap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, "", err
+	}
+	for _, key := range keys {
+		if raw, ok := wrap[key]; ok {
+			return raw, key, nil
+		}
+	}
+	return nil, "", fmt.Errorf("source response missing %q", strings.Join(keys, `" or "`))
 }
 
 func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]SelectedItem, []string) {
@@ -462,6 +483,30 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 					byKey[wk] = dep
 					changed = true
 				}
+			case "catalogItem":
+				obj := parseObject(it.RawJSON)
+				if extractCatalogInstanceTypeCode(obj) == "" && it.ID > 0 {
+					if full, err := fetchFullCatalogItem(src, it.ID); err == nil {
+						obj = full
+						it.RawJSON = mustJSON(full)
+						byKey[k] = it
+					}
+				}
+				itCode := extractCatalogInstanceTypeCode(obj)
+				if itCode == "" {
+					continue
+				}
+				srcIT, err := findSourceInstanceTypeByCode(src, itCode)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("catalog item %q: required instance type %q not retrievable (%v)", it.Name, itCode, err))
+					continue
+				}
+				ik := itemKey{Type: "instanceType", ID: srcIT.ID}
+				if _, ok := byKey[ik]; ok {
+					continue
+				}
+				byKey[ik] = srcIT
+				changed = true
 			}
 		}
 	}
@@ -471,6 +516,14 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 		out = append(out, it)
 	}
 	return out, errs
+}
+
+func mustJSON(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func appendItemResult(result *MigrateResult, r ItemResult) {
@@ -559,7 +612,24 @@ func findDestinationVirtualImageIDByName(dst *morpheus.Client, sourceName string
 	if name == "" {
 		return 0, nil
 	}
-	path := fmt.Sprintf("/api/virtual-images?phrase=%s&max=100&offset=0", url.QueryEscape(name))
+	escaped := url.QueryEscape(name)
+	queries := []string{
+		fmt.Sprintf("/api/virtual-images?max=100&offset=0&name=%s&filterType=All", escaped),
+		fmt.Sprintf("/api/virtual-images?phrase=%s&max=100&offset=0", escaped),
+	}
+	for _, path := range queries {
+		id, err := virtualImageIDFromListQuery(dst, path, name)
+		if err != nil {
+			return 0, err
+		}
+		if id > 0 {
+			return id, nil
+		}
+	}
+	return 0, nil
+}
+
+func virtualImageIDFromListQuery(dst *morpheus.Client, path, wantName string) (int64, error) {
 	body, err := dst.GetRaw(path)
 	if err != nil {
 		return 0, fmt.Errorf("query virtual images: %v", err)
@@ -570,13 +640,21 @@ func findDestinationVirtualImageIDByName(dst *morpheus.Client, sourceName string
 	}
 	raw, ok := wrap["virtualImages"]
 	if !ok {
-		return 0, fmt.Errorf("virtualImages key missing in destination response")
+		return 0, nil
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return 0, err
 	}
-	want := strings.ToLower(name)
+	id := virtualImageIDFromItems(items, wantName)
+	if id > 0 {
+		return id, nil
+	}
+	return 0, nil
+}
+
+func virtualImageIDFromItems(items []json.RawMessage, wantName string) int64 {
+	want := strings.ToLower(strings.TrimSpace(wantName))
 	for _, it := range items {
 		var row map[string]interface{}
 		if json.Unmarshal(it, &row) != nil {
@@ -585,9 +663,9 @@ func findDestinationVirtualImageIDByName(dst *morpheus.Client, sourceName string
 		n := strings.ToLower(strings.TrimSpace(stringFromAny(row["name"])))
 		if n == want {
 			if id := intFromAny(row["id"]); id > 0 {
-				return id, nil
+				return id
 			}
 		}
 	}
-	return 0, nil
+	return 0
 }

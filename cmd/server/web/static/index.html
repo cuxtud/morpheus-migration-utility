@@ -1368,6 +1368,84 @@
     transition: width 0.3s ease;
   }
 
+  .migration-current-step {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent2);
+    margin: 8px 0 4px;
+    min-height: 1.2em;
+  }
+
+  .migration-step-log {
+    max-height: 140px;
+    overflow-y: auto;
+    margin: 8px 0 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(0, 0, 0, 0.2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .migration-step-log .log-line {
+    padding: 2px 0;
+    border-left: 2px solid transparent;
+    padding-left: 8px;
+    margin: 2px 0;
+  }
+
+  .migration-step-log .log-line.active {
+    color: var(--accent2);
+    border-left-color: var(--accent2);
+  }
+
+  .migration-queue-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 12px 0 6px;
+  }
+
+  .migration-queue-list {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface2);
+  }
+
+  .migration-queue-item {
+    padding: 6px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .migration-queue-item:last-child { border-bottom: none; }
+
+  .migration-queue-item.active {
+    color: var(--accent2);
+    background: rgba(56, 189, 248, 0.08);
+  }
+
+  .migration-queue-item.done {
+    color: var(--success);
+  }
+
+  .migration-queue-item .q-ico {
+    width: 14px;
+    flex-shrink: 0;
+    text-align: center;
+  }
+
   /* Alerts */
   .alert {
     padding: 12px 16px;
@@ -1728,7 +1806,7 @@
       <div class="panel">
         <div class="panel-title">Relation view</div>
         <p style="font-size:13px;color:var(--text2);margin:0 0 16px;line-height:1.5;">
-          Dependency graph for a discovered item. Click a discovered task in appliance detail to load relations.
+          Dependency graph for a discovered item. Instance types show layouts and inputs; layouts show inputs, workflows, and node types; node types show virtual images.
         </p>
         <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
           <button type="button" class="btn btn-secondary" onclick="setFleetSubView('appliances')">← Back to appliances</button>
@@ -1963,6 +2041,7 @@
 
     <!-- Category groups -->
     <div id="categoryList"></div>
+    <div id="migrationRelationsMount" class="hidden" style="margin-top:16px;"></div>
 
     <!-- Sticky selection bar -->
     <div class="selection-bar" id="selectionBar">
@@ -2060,6 +2139,12 @@
         <div class="progress-wrap">
           <div class="progress-bar" id="migrationProgress" style="width: 0%"></div>
         </div>
+        <div id="migrationCurrentStep" class="migration-current-step"></div>
+        <div id="migrationStepLog" class="migration-step-log hidden"></div>
+        <div id="migrationQueueWrap" class="hidden">
+          <div class="migration-queue-title">Migration queue</div>
+          <div id="migrationQueueList" class="migration-queue-list"></div>
+        </div>
       </div>
 
       <div id="migrationDone" class="hidden">
@@ -2155,6 +2240,7 @@ let state = {
   fleetDetailFilter: 'ALL',
   fleetInventorySelected: new Set(),
   fleetRelationContext: null,
+  migrationRelationContext: null,
   storagePostgres: false,
   discoveryHistory: [],
   serverSessionId: localStorage.getItem('morpheus_server_session_id') || ''
@@ -2168,6 +2254,147 @@ async function api(path, method='GET', body=null) {
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
+}
+
+function resetMigrationProgressUI() {
+  document.getElementById('migrationProgress').style.width = '0%';
+  document.getElementById('migrationCurrentStep').textContent = '';
+  const log = document.getElementById('migrationStepLog');
+  log.innerHTML = '';
+  log.classList.add('hidden');
+  document.getElementById('migrationQueueWrap').classList.add('hidden');
+  document.getElementById('migrationQueueList').innerHTML = '';
+}
+
+function appendMigrationLogLine(msg, active) {
+  const log = document.getElementById('migrationStepLog');
+  log.classList.remove('hidden');
+  log.querySelectorAll('.log-line.active').forEach(el => el.classList.remove('active'));
+  const line = document.createElement('div');
+  line.className = 'log-line' + (active ? ' active' : '');
+  line.textContent = msg;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderMigrationQueue(queue, activeIndex, doneCount) {
+  const wrap = document.getElementById('migrationQueueWrap');
+  const el = document.getElementById('migrationQueueList');
+  if (!queue || !queue.length) {
+    wrap.classList.add('hidden');
+    return;
+  }
+  wrap.classList.remove('hidden');
+  el.innerHTML = queue.map((label, i) => {
+    let cls = 'migration-queue-item';
+    let ico = '○';
+    if (i < doneCount) { cls += ' done'; ico = '✓'; }
+    else if (i === activeIndex) { cls += ' active'; ico = '▸'; }
+    return `<div class="${cls}"><span class="q-ico">${ico}</span><span>${escapeHtml(label)}</span></div>`;
+  }).join('');
+  const activeEl = el.querySelector('.migration-queue-item.active');
+  if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+}
+
+function updateMigrationProgressUI(ev) {
+  if (!ev) return;
+  const phase = ev.phase || '';
+  const msg = ev.message || '';
+  if (msg) {
+    document.getElementById('migrationMsg').textContent = msg;
+    document.getElementById('migrationCurrentStep').textContent = msg;
+    if (phase === 'step' || phase === 'preparing') {
+      appendMigrationLogLine(msg, true);
+    } else if (phase === 'item_done') {
+      appendMigrationLogLine(msg, false);
+    }
+  }
+  if (phase === 'queue' && ev.queue && ev.queue.length) {
+    state.migrationQueue = ev.queue;
+    renderMigrationQueue(ev.queue, 0, 0);
+  }
+  if (ev.total > 0 && ev.index > 0) {
+    const pct = Math.min(100, Math.round((ev.index / ev.total) * 100));
+    document.getElementById('migrationProgress').style.width = pct + '%';
+    if (state.migrationQueue && state.migrationQueue.length) {
+      const doneCount = phase === 'item_done' ? ev.index : Math.max(0, ev.index - 1);
+      const activeIdx = phase === 'item_done' && ev.index >= ev.total ? -1 : Math.min(ev.index, state.migrationQueue.length - 1);
+      if (phase === 'item_done') {
+        renderMigrationQueue(state.migrationQueue, activeIdx, ev.index);
+      } else if (phase === 'step') {
+        renderMigrationQueue(state.migrationQueue, ev.index - 1, ev.index - 1);
+      }
+    }
+  }
+}
+
+function migrationStreamError(err) {
+  const msg = String(err && err.message || err || '');
+  if (/network|failed to fetch|load failed|aborted/i.test(msg)) {
+    return new Error(
+      'Connection to the migration utility was lost before results were received. ' +
+      'This is usually a browser or server timeout during a long run — not a failure to reach source or destination Morpheus. ' +
+      'The migration may still have completed: check the destination appliance and server logs, then retry if needed.'
+    );
+  }
+  if (/without a result/i.test(msg)) {
+    return new Error(
+      'Migration stream ended without a final result (connection closed early). ' +
+      'Check the destination for created or updated resources before re-running.'
+    );
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
+async function apiMigrateStream(path, body, onEvent) {
+  let r;
+  try {
+    r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw migrationStreamError(err);
+  }
+  if (!r.ok) {
+    let errMsg = `HTTP ${r.status}`;
+    try {
+      const data = await r.json();
+      if (data.error) errMsg = data.error;
+    } catch (_) {}
+    throw new Error(errMsg);
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let result = null;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const row = JSON.parse(trimmed);
+        if (row.type === 'progress' && row.event) onEvent(row.event);
+        else if (row.type === 'heartbeat') { /* keep-alive */ }
+        else if (row.type === 'result') result = row.result;
+      }
+    }
+    if (buf.trim()) {
+      const row = JSON.parse(buf.trim());
+      if (row.type === 'progress' && row.event) onEvent(row.event);
+      else if (row.type === 'result') result = row.result;
+    }
+  } catch (err) {
+    throw migrationStreamError(err);
+  }
+  if (!result) throw migrationStreamError(new Error('Migration ended without a result'));
+  return result;
 }
 
 // ─── Step navigation ─────────────────────────────────────────────────────────
@@ -2293,35 +2520,39 @@ function toggleSideAuthFields(side) {
 }
 
 function connPayloadFromSide(side) {
-  const profileId = (document.getElementById(side + 'ProfileSelect') || {}).value || '';
-  if (profileId) return { profileId };
-  const url = document.getElementById(side + 'Url').value.trim();
-  const skipTls = document.getElementById(side + 'SkipTLS').checked;
-  if (sideAuthType(side) === 'password') {
-    const username = document.getElementById(side + 'Username').value.trim();
-    const password = document.getElementById(side + 'Password').value;
-    if (!url || !username || !password) return null;
-    return { url, username, password, skipTls };
+  const appl = migrationApplFromSide(side);
+  const profileId = appl.profileId || '';
+  const url = appl.url || '';
+  const skipTls = appl.skipTls;
+  if (profileId) {
+    if (appl.token || (appl.username && appl.password)) return appl;
+    return { profileId, url, skipTls };
   }
-  const token = document.getElementById(side + 'Token').value.trim();
-  if (!url || !token) return null;
-  return { url, token, skipTls };
+  if (sideAuthType(side) === 'password') {
+    if (!url || !appl.username || !appl.password) return null;
+    return { url, username: appl.username, password: appl.password, skipTls };
+  }
+  if (!url || !appl.token) return null;
+  return { url, token: appl.token, skipTls };
 }
 
 function migrationApplFromSide(side) {
   const profileId = (document.getElementById(side + 'ProfileSelect') || {}).value || '';
-  if (profileId) return { profileId };
   const url = document.getElementById(side + 'Url').value.trim();
   const skipTls = document.getElementById(side + 'SkipTLS').checked;
+  const out = { skipTls };
+  if (profileId) out.profileId = profileId;
+  if (url) out.url = url;
   if (sideAuthType(side) === 'password') {
-    return {
-      url,
-      username: document.getElementById(side + 'Username').value.trim(),
-      password: document.getElementById(side + 'Password').value,
-      skipTls
-    };
+    const username = document.getElementById(side + 'Username').value.trim();
+    const password = document.getElementById(side + 'Password').value;
+    if (username) out.username = username;
+    if (password) out.password = password;
+  } else {
+    const token = document.getElementById(side + 'Token').value.trim();
+    if (token) out.token = token;
   }
-  return { url, token: document.getElementById(side + 'Token').value.trim(), skipTls };
+  return out;
 }
 
 function requireConnPayload(side) {
@@ -2608,13 +2839,20 @@ async function deleteProfileById(id) {
   }
 }
 
+function fleetDiscoverPayload(id) {
+  const p = profilesCache.find(x => x.id === id);
+  const body = { profileId: id };
+  if (p && p.skipTls) body.skipTls = true;
+  return body;
+}
+
 async function fleetDiscoverOne(id) {
   const status = document.getElementById('fleetDiscoverStatus');
   status.classList.remove('hidden', 'ok', 'err', 'warn');
   status.classList.add('loading');
   status.innerHTML = '<div class="dot pulse"></div><span>Discovering…</span>';
   try {
-    const snap = await api('/api/profiles/discover', 'POST', { profileId: id });
+    const snap = await api('/api/profiles/discover', 'POST', fleetDiscoverPayload(id));
     state.fleetSnapshots[id] = snap;
     delete state.fleetDiscoveryErrors[id];
     renderDiscoveredAppliancesList();
@@ -2658,7 +2896,7 @@ async function fleetDiscoverSelected() {
     const label = p ? p.name : id;
     status.innerHTML = '<div class="dot pulse"></div><span>Discovering ' + escapeHtml(label) + ' (' + (i + 1) + ' of ' + ids.length + ')…</span>';
     try {
-      const snap = await api('/api/profiles/discover', 'POST', { profileId: id });
+      const snap = await api('/api/profiles/discover', 'POST', fleetDiscoverPayload(id));
       state.fleetSnapshots[id] = snap;
       delete state.fleetDiscoveryErrors[id];
       ok++;
@@ -3211,14 +3449,15 @@ function renderFleetDetailDiscovery() {
 
   (d.categories || []).forEach(cat => {
     if (filter !== 'ALL' && cat.name !== filter) return;
-    const filtered = (cat.items || []).filter(item =>
-      !search ||
-      (item.name || '').toLowerCase().includes(search) ||
-      (item.subType || '').toLowerCase().includes(search) ||
-      (item.type || '').toLowerCase().includes(search) ||
-      String(item.id).includes(search) ||
-      (item.description || '').toLowerCase().includes(search)
-    );
+    const filtered = (cat.items || []).filter(item => {
+      if (!search) return true;
+      const label = discoveryDisplayName(item);
+      return label.toLowerCase().includes(search) ||
+        (item.subType || '').toLowerCase().includes(search) ||
+        (item.type || '').toLowerCase().includes(search) ||
+        String(item.id).includes(search) ||
+        (item.description || '').toLowerCase().includes(search);
+    });
     if (!filtered.length) return;
     const parent = parentPathLabel(cat) || 'Other';
     if (!visibleByParent[parent]) visibleByParent[parent] = [];
@@ -3249,12 +3488,13 @@ function renderFleetDetailDiscovery() {
       list.className = 'item-list open';
 
       filtered.forEach(item => {
+        const displayName = discoveryDisplayName(item);
         const row = document.createElement('div');
         row.className = 'item-row';
         row.style.cursor = 'pointer';
         row.title = 'Open relation view';
         row.innerHTML = `
-          <span class="item-name" title="${escapeHtml(item.name || '')}">${escapeHtml(item.name || '<unnamed>')}</span>
+          <span class="item-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName || '<unnamed>')}</span>
           ${item.subType ? `<span class="item-subtype">${escapeHtml(item.subType)}</span>` : ''}
           ${item.type ? `<span class="item-subtype">${escapeHtml(item.type)}</span>` : ''}
           <span class="item-id">#${item.id}</span>
@@ -3283,6 +3523,39 @@ function parseJsonSafe(raw) {
   if (!raw) return {};
   if (typeof raw === 'object') return raw;
   try { return JSON.parse(raw); } catch (_) { return {}; }
+}
+
+function discoveryDisplayName(item) {
+  const direct = String(item?.name || '').trim();
+  if (direct) return direct;
+  const raw = parseJsonSafe(item?.rawJson);
+  const type = String(item?.type || '').toLowerCase();
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = String(raw[k] || '').trim();
+      if (v) return v;
+    }
+    return '';
+  };
+  const common = pick('name', 'displayName', 'label', 'title');
+  if (common) return common;
+  switch (type) {
+    case 'cypher':
+      return pick('itemKey', 'key', 'cypherKey');
+    case 'cloud':
+      return pick('code', 'zoneCode') ||
+        String(raw.zoneType?.name || raw.zoneType?.code || '').trim();
+    case 'catalogitem':
+      return pick('code', 'technology', 'refType');
+    case 'instancetype':
+    case 'layout':
+    case 'nodetype':
+      return pick('code', 'shortName', 'layoutCode');
+    case 'virtualimage':
+      return pick('fileName', 'imageName', 'externalId', 'remoteName');
+    default:
+      return pick('username', 'code', 'itemKey', 'key');
+  }
 }
 
 function renderRelationGraph(nodes, edges) {
@@ -3370,6 +3643,10 @@ function openFleetRelationsForItem(profileId, category, item) {
 }
 
 function renderFleetRelationsView() {
+  void renderFleetRelationsViewAsync();
+}
+
+async function renderFleetRelationsViewAsync() {
   const host = document.getElementById('fleetRelationsMount');
   if (!host) return;
   const ctx = state.fleetRelationContext;
@@ -3379,45 +3656,254 @@ function renderFleetRelationsView() {
   }
   const profileId = ctx.profileId || state.fleetDetailProfileId;
   const snap = profileId ? state.fleetSnapshots[profileId] : null;
-  const d = (snap && snap.discovery) || null;
+  let d = (snap && snap.discovery) || null;
   if (!d) {
     host.innerHTML = '<div class="empty"><p>No discovery loaded for this appliance.</p></div>';
     return;
   }
 
-  const item = ctx.item;
-  const itemRaw = parseJsonSafe(item.rawJson);
-  const t = normType(item.type);
-  const blocks = [];
-
-  // Common identity block
-  blocks.push(`<div class="fleet-kv-grid">
-    <div class="fleet-kv"><div class="k">Category</div><div class="v">${escapeHtml(ctx.category || '—')}</div></div>
-    <div class="fleet-kv"><div class="k">Type</div><div class="v">${escapeHtml(item.type || '—')}</div></div>
-    <div class="fleet-kv"><div class="k">Name</div><div class="v">${escapeHtml(item.name || '—')}</div></div>
-    <div class="fleet-kv"><div class="k">ID</div><div class="v">#${escapeHtml(String(item.id || '—'))}</div></div>
-  </div>`);
-
-  if (t === 'task') {
-    const rel = taskRelationsFromDiscovery(item, itemRaw, d);
-    blocks.push(rel);
-  } else if (t === 'workflow') {
-    const rel = workflowRelationsFromDiscovery(item, itemRaw, d);
-    blocks.push(rel);
-  } else if (t === 'catalogitem') {
-    const rel = catalogRelationsFromDiscovery(item, itemRaw, d);
-    blocks.push(rel);
-  } else if (t === 'input') {
-    const rel = inputRelationsFromDiscovery(item, itemRaw, d);
-    blocks.push(rel);
-  } else if (t === 'optionlist') {
-    const rel = optionListRelationsFromDiscovery(item, itemRaw, d);
-    blocks.push(rel);
-  } else {
-    blocks.push('<div class="alert info"><span>ℹ</span><span>Relation extraction is currently optimized for Tasks. Other item types will be added next.</span></div>');
+  let item = ctx.item;
+  const itemType = normType(item.type);
+  if (itemType === 'instancetype' || itemType === 'nodetype') {
+    host.innerHTML = '<div class="panel"><div class="alert info"><span>⏳</span><span>Loading relations…</span></div></div>';
+  }
+  if (itemType === 'instancetype' && profileId) {
+    d = await enrichDiscoveryInstanceTypes(d, [`${ctx.category}:${item.id}`], { profileId });
+    const cat = d.categories.find(c => c.name === ctx.category);
+    item = cat && (cat.items || []).find(i => Number(i.id) === Number(item.id));
+    if (!item) return;
+  } else if (itemType === 'nodetype' && profileId) {
+    d = await enrichDiscoveryNodeTypes(d, [`${ctx.category}:${item.id}`], { profileId });
+    const cat = d.categories.find(c => c.name === ctx.category);
+    item = cat && (cat.items || []).find(i => Number(i.id) === Number(item.id));
+    if (!item) return;
   }
 
+  const blocks = [
+    `<div class="fleet-kv-grid">
+      <div class="fleet-kv"><div class="k">Category</div><div class="v">${escapeHtml(ctx.category || '—')}</div></div>
+      <div class="fleet-kv"><div class="k">Type</div><div class="v">${escapeHtml(item.type || '—')}</div></div>
+      <div class="fleet-kv"><div class="k">Name</div><div class="v">${escapeHtml(item.name || '—')}</div></div>
+      <div class="fleet-kv"><div class="k">ID</div><div class="v">#${escapeHtml(String(item.id || '—'))}</div></div>
+    </div>`,
+    relationsPanelForItem(item, d),
+  ];
   host.innerHTML = blocks.join('');
+}
+
+function relationsPanelForItem(item, discovery) {
+  const itemRaw = parseJsonSafe(item.rawJson);
+  const t = normType(item.type);
+  if (t === 'task') return taskRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'workflow') return workflowRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'catalogitem') return catalogRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'input') return inputRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'optionlist') return optionListRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'integration') return integrationRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'instancetype') return instanceTypeRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'layout') return layoutRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'nodetype') return nodeTypeRelationsFromDiscovery(item, itemRaw, discovery);
+  if (t === 'virtualimage') return virtualImageRelationsFromDiscovery(item, itemRaw, discovery);
+  return '<div class="alert info"><span>ℹ</span><span>Relation extraction is available for instance types, layouts, node types, virtual images, tasks, workflows, integrations, catalogs, inputs, and option lists.</span></div>';
+}
+
+async function openMigrationRelations(catName, itemId) {
+  let d = state.discovery;
+  if (!d) return;
+  const cat = d.categories.find(c => c.name === catName);
+  let item = cat && (cat.items || []).find(i => Number(i.id) === Number(itemId));
+  if (!item) return;
+  const itemType = normType(item.type);
+  if (itemType === 'instancetype') {
+    d = await enrichDiscoveryInstanceTypes(d, [`${catName}:${itemId}`], state.srcProfileId ? { profileId: state.srcProfileId } : null);
+  } else if (itemType === 'nodetype') {
+    d = await enrichDiscoveryNodeTypes(d, [`${catName}:${itemId}`], state.srcProfileId ? { profileId: state.srcProfileId } : null);
+  }
+  if (itemType === 'instancetype' || itemType === 'nodetype') {
+    state.discovery = d;
+    const cat2 = d.categories.find(c => c.name === catName);
+    item = cat2 && (cat2.items || []).find(i => Number(i.id) === Number(itemId));
+    if (!item) return;
+  }
+  state.migrationRelationContext = { category: catName, item };
+  const host = document.getElementById('migrationRelationsMount');
+  if (!host) return;
+  host.classList.remove('hidden');
+  host.innerHTML = `<div class="panel"><div class="alert info"><span>⏳</span><span>Loading relations…</span></div></div>`;
+  renderMigrationRelationsView();
+  host.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeMigrationRelations() {
+  const host = document.getElementById('migrationRelationsMount');
+  if (host) {
+    host.classList.add('hidden');
+    host.innerHTML = '';
+  }
+  state.migrationRelationContext = null;
+}
+
+function renderMigrationRelationsView() {
+  const host = document.getElementById('migrationRelationsMount');
+  const ctx = state.migrationRelationContext;
+  const d = state.discovery;
+  if (!host || !ctx || !ctx.item || !d) return;
+  const item = ctx.item;
+  host.innerHTML = `<div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+      <div class="panel-title" style="margin:0;">Relations — ${escapeHtml(discoveryDisplayName(item))}</div>
+      <button type="button" class="btn btn-secondary" onclick="closeMigrationRelations()">Close</button>
+    </div>
+    ${relationsPanelForItem(item, d)}
+  </div>`;
+}
+
+function taskTypeCodeFromRaw(taskRaw) {
+  const tm = taskRaw && taskRaw.taskType;
+  if (tm && typeof tm === 'object') return String(tm.code || tm.name || '').toLowerCase();
+  return '';
+}
+
+function integrationTypeCodeFromRaw(intRaw, item) {
+  const tm = intRaw && intRaw.integrationType;
+  if (tm && typeof tm === 'object') {
+    const c = String(tm.code || tm.name || '').toLowerCase();
+    if (c) return c;
+  }
+  return String((item && item.subType) || intRaw.type || '').toLowerCase();
+}
+
+function integrationKindLabel(code) {
+  const c = String(code || '').toLowerCase();
+  if (c.includes('ansible')) return 'Ansible';
+  if (c === 'git' || c.includes('git')) return 'Git';
+  return c ? c.charAt(0).toUpperCase() + c.slice(1) : 'Integration';
+}
+
+function isAnsibleTaskType(code) {
+  return code === 'ansibletask' || code.includes('ansible');
+}
+
+function tasksMappedToIntegration(integrationItem, intRaw, discovery) {
+  const intId = Number(integrationItem.id || intRaw.id || 0);
+  const intName = String(integrationItem.name || intRaw.name || '').trim().toLowerCase();
+  const intCode = integrationTypeCodeFromRaw(intRaw, integrationItem);
+  const mapped = [];
+
+  const push = (taskItem, taskRaw, binding, detail) => {
+    const key = String(taskItem.id || taskItem.name);
+    if (mapped.some(m => String(m.task.id || m.task.name) === key && m.binding === binding)) return;
+    mapped.push({ task: taskItem, taskRaw, binding, detail });
+  };
+
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(taskItem => {
+      if (normType(taskItem.type) !== 'task') return;
+      const tr = parseJsonSafe(taskItem.rawJson);
+      const tt = taskTypeCodeFromRaw(tr);
+      const opts = tr.taskOptions || {};
+      const file = tr.file || {};
+      const st = String(file.sourceType || '').toLowerCase();
+      const repo = file.repository || {};
+      const repoId = Number(repo.id || 0);
+      const repoName = String(repo.name || '').trim().toLowerCase();
+
+      if (isAnsibleTaskType(tt)) {
+        const ag = String(opts.ansibleGitId || '').trim();
+        if (intId > 0 && ag === String(intId)) {
+          push(taskItem, tr, 'ansible', 'taskOptions.ansibleGitId');
+        }
+        if (st === 'repository' && intId > 0 && repoId === intId) {
+          push(taskItem, tr, 'ansible', 'file.repository (playbook repo)');
+        }
+        return;
+      }
+
+      if (st === 'repository') {
+        if (intId > 0 && repoId === intId) {
+          push(taskItem, tr, 'git', 'file.repository.id → Git integration');
+        } else if (intName && repoName === intName) {
+          push(taskItem, tr, 'git', 'file.repository.name');
+        }
+      }
+
+      const lsg = String(opts.localScriptGitId || '').trim();
+      if (lsg && intId > 0 && lsg === String(intId)) {
+        push(taskItem, tr, 'git', 'taskOptions.localScriptGitId');
+      }
+    });
+  });
+
+  if (intCode.includes('ansible')) {
+    return mapped.filter(m => m.binding === 'ansible');
+  }
+  if (intCode === 'git' || intCode.includes('git')) {
+    return mapped.filter(m => m.binding === 'git');
+  }
+  return mapped;
+}
+
+function integrationRelationsFromDiscovery(item, intRaw, discovery) {
+  const rows = [];
+  const intCode = integrationTypeCodeFromRaw(intRaw, item);
+  const kind = integrationKindLabel(intCode);
+  const mapped = tasksMappedToIntegration(item, intRaw, discovery);
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Integration type:</strong> ${escapeHtml(kind)}${intCode ? ` <span style="color:var(--text3)">(${escapeHtml(intCode)})</span>` : ''}</div>`);
+
+  const gitTasks = mapped.filter(m => m.binding === 'git');
+  const ansibleTasks = mapped.filter(m => m.binding === 'ansible');
+
+  if (kind === 'Git') {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Tasks using this Git integration:</strong> ${
+      gitTasks.length
+        ? gitTasks.map(m => `${escapeHtml(m.task.name)} (#${m.task.id}) <span style="color:var(--text3)">via ${escapeHtml(m.detail)}</span>`).join('<br>')
+        : '<span style="color:var(--text3)">none found in discovery</span>'
+    }</div>`);
+  } else if (kind === 'Ansible') {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Tasks using this Ansible integration:</strong> ${
+      ansibleTasks.length
+        ? ansibleTasks.map(m => `${escapeHtml(m.task.name)} (#${m.task.id}) <span style="color:var(--text3)">via ${escapeHtml(m.detail)}</span>`).join('<br>')
+        : '<span style="color:var(--text3)">none found in discovery</span>'
+    }</div>`);
+  } else {
+    rows.push(`<div style="margin-bottom:10px;"><strong>Mapped tasks:</strong> ${
+      mapped.length
+        ? mapped.map(m => `${escapeHtml(m.task.name)} (#${m.task.id}) — ${escapeHtml(m.binding)}: ${escapeHtml(m.detail)}`).join('<br>')
+        : '<span style="color:var(--text3)">none found in discovery</span>'
+    }</div>`);
+  }
+
+  const rootId = `int-${item.id || 0}`;
+  const graphNodes = [
+    { id: rootId, label: item.name || 'Integration', sub: `${kind} #${item.id || ''}`, level: 0, clickType: 'integration', clickId: item.id || 0 }
+  ];
+  const graphEdges = [];
+
+  mapped.forEach((m, i) => {
+    const tid = `task-${m.task.id || i}`;
+    const tcode = taskTypeCodeFromRaw(m.taskRaw);
+    const tlabel = m.task.name || 'Task';
+    graphNodes.push({
+      id: tid,
+      label: tlabel,
+      sub: `${m.binding === 'ansible' ? 'Ansible' : 'Git'} task · #${m.task.id || ''}`,
+      level: 1,
+      clickType: 'task',
+      clickId: m.task.id || 0
+    });
+    graphEdges.push({ from: rootId, to: tid, label: m.detail });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Integration → task mapping</div>
+    <p style="font-size:12px;color:var(--text3);margin:0 0 12px;line-height:1.5;">
+      Repository-backed <strong>non-Ansible</strong> tasks map to <strong>Git</strong> integrations via <code>file.repository</code>.
+      <strong>Ansible</strong> tasks map via <code>taskOptions.ansibleGitId</code> (Ansible Tower / Ansible integration type).
+    </p>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
 }
 
 function taskRelationsFromDiscovery(item, taskRaw, discovery) {
@@ -3460,12 +3946,26 @@ function taskRelationsFromDiscovery(item, taskRaw, discovery) {
         if (repoName && String(i.name || '').toLowerCase().includes(String(repoName).toLowerCase())) intItems.push(i);
       });
     });
-    const uniq = [];
+    let uniq = [];
     const seen = new Set();
     intItems.forEach(i => { const k = `${i.id}`; if (!seen.has(k)) { seen.add(k); uniq.push(i); } });
+    const tt = taskTypeCodeFromRaw(taskRaw);
+    uniq = uniq.filter(i => {
+      const ir = parseJsonSafe(i.rawJson);
+      const k = integrationTypeCodeFromRaw(ir, i);
+      if (isAnsibleTaskType(tt)) return k.includes('ansible');
+      if (k.includes('ansible')) return false;
+      return k === 'git' || k.includes('git') || k === '';
+    });
     if (!uniq.length) integrationHint = '<span style="color:var(--warn)">No matching integration found in discovery set.</span>';
     rows.push(`<div style="margin-bottom:10px;"><strong>Repository source:</strong> ${escapeHtml(repoName || 'yes')}${repoId > 0 ? ` (#${repoId})` : ''}</div>`);
-    rows.push(`<div style="margin-bottom:10px;"><strong>Related integrations:</strong> ${uniq.length ? uniq.map(i => `${escapeHtml(i.name)} (#${i.id})`).join(', ') : integrationHint}</div>`);
+    const expectKind = isAnsibleTaskType(tt) ? 'Ansible' : 'Git';
+    rows.push(`<div style="margin-bottom:10px;"><strong>Expected integration type:</strong> ${escapeHtml(expectKind)} <span style="color:var(--text3)">(task type: ${escapeHtml(tt || '—')})</span></div>`);
+    rows.push(`<div style="margin-bottom:10px;"><strong>Related integrations:</strong> ${uniq.length ? uniq.map(i => {
+      const ir = parseJsonSafe(i.rawJson);
+      const k = integrationKindLabel(integrationTypeCodeFromRaw(ir, i));
+      return `${escapeHtml(i.name)} (#${i.id}) [${escapeHtml(k)}]`;
+    }).join(', ') : integrationHint}</div>`);
   } else {
     rows.push(`<div style="margin-bottom:10px;"><strong>Source type:</strong> ${escapeHtml(sourceType || 'local')}</div>`);
   }
@@ -3484,8 +3984,26 @@ function taskRelationsFromDiscovery(item, taskRaw, discovery) {
     const rid = Number(repo.id || 0);
     const rname = String(repo.name || '').trim();
     if (rid > 0 || rname) {
+      let intHit = null;
+      (discovery.categories || []).forEach(cat => {
+        (cat.items || []).forEach(i => {
+          if (normType(i.type) !== 'integration') return;
+          if (rid > 0 && Number(i.id) === rid) intHit = i;
+        });
+      });
+      const ir = intHit ? parseJsonSafe(intHit.rawJson) : {};
+      const kind = integrationKindLabel(integrationTypeCodeFromRaw(ir, intHit));
+      const tt = taskTypeCodeFromRaw(taskRaw);
+      const edgeKind = isAnsibleTaskType(tt) ? 'Ansible' : 'Git';
       const id = `int-${rid || rname.toLowerCase()}`;
-      graphNodes.push({ id, label: rname || 'Integration', sub: `Integration #${rid || ''}`, level: 1, clickType: 'integration', clickId: rid || 0 });
+      graphNodes.push({
+        id,
+        label: rname || (intHit && intHit.name) || 'Integration',
+        sub: `${kind} · ${edgeKind} mapping · #${rid || ''}`,
+        level: 1,
+        clickType: 'integration',
+        clickId: rid || 0
+      });
       graphEdges.push({ from: `task-${item.id || 0}`, to: id });
     }
   }
@@ -3649,6 +4167,7 @@ function resolveRefFromDiscovery(ref, typeNorm, byType, fallbackName) {
   if (ref && typeof ref === 'object') {
     const rid = Number(ref.id || 0);
     const rname = String(ref.name || '').trim().toLowerCase();
+    const rcode = String(ref.code || ref.fieldName || '').trim().toLowerCase();
     if (rid > 0) {
       const hit = list.find(x => Number(x.id || 0) === rid);
       if (hit) return hit;
@@ -3657,11 +4176,638 @@ function resolveRefFromDiscovery(ref, typeNorm, byType, fallbackName) {
       const hit = list.find(x => String(x.name || '').toLowerCase() === rname);
       if (hit) return hit;
     }
+    if (rcode) {
+      const hit = list.find(x => {
+        const raw = parseJsonSafe(x.rawJson);
+        const candidates = [x.name, raw.code, raw.fieldName].map(s => String(s || '').toLowerCase());
+        return candidates.includes(rcode);
+      });
+      if (hit) return hit;
+    }
   }
   if (fallbackName) {
     const n = String(fallbackName).toLowerCase();
     const hit = list.find(x => String(x.name || '').toLowerCase() === n);
     if (hit) return hit;
+  }
+  return null;
+}
+
+function virtualImageNameCandidates(raw, item) {
+  if (!raw || typeof raw !== 'object') raw = {};
+  return [item?.name, raw.name, raw.fileName, raw.imageName, raw.externalId, raw.remoteName]
+    .map(s => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function resolveVirtualImageFromDiscovery(ref, byType) {
+  const list = byType.get('virtualimage') || [];
+  if (!ref) return null;
+  const rid = Number(ref.id || 0);
+  if (rid > 0) {
+    const hit = list.find(x => Number(x.id || 0) === rid);
+    if (hit) return hit;
+  }
+  const refNames = [ref.name, ref.fileName, ref.imageName, ref.externalId]
+    .map(s => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!refNames.length) return null;
+  return list.find(x => {
+    const cands = virtualImageNameCandidates(parseJsonSafe(x.rawJson), x);
+    return refNames.some(rn => cands.includes(rn));
+  }) || null;
+}
+
+function discoveryItemsForRefs(refs, typeNorm, byType) {
+  const out = [];
+  const seen = new Set();
+  (refs || []).forEach(ref => {
+    const hit = typeNorm === 'virtualimage'
+      ? resolveVirtualImageFromDiscovery(ref, byType)
+      : resolveRefFromDiscovery(ref, typeNorm, byType, ref && (ref.name || ref.code || ref.fieldName));
+    if (!hit) return;
+    const k = String(hit.id);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(hit);
+  });
+  return out;
+}
+
+function extractVirtualImageRef(nodeRaw) {
+  if (!nodeRaw || typeof nodeRaw !== 'object') return null;
+  if (nodeRaw.virtualImage && typeof nodeRaw.virtualImage === 'object') {
+    const ref = depRefFromObj(nodeRaw.virtualImage);
+    if (ref) return ref;
+  }
+  if (nodeRaw.image && typeof nodeRaw.image === 'object') {
+    const ref = depRefFromObj(nodeRaw.image);
+    if (ref) return ref;
+  }
+  const vid = Number(nodeRaw.virtualImageId || nodeRaw.imageId || 0);
+  if (vid > 0) {
+    return {
+      id: vid,
+      name: String(nodeRaw.virtualImageName || nodeRaw.imageName || nodeRaw.fileName || '').trim(),
+    };
+  }
+  return null;
+}
+
+function nodeTypesUsingVirtualImage(viItem, viRaw, byType) {
+  const viId = Number(viItem?.id || viRaw?.id || 0);
+  const viNames = virtualImageNameCandidates(viRaw, viItem);
+  const matchesVI = (nodeRaw) => {
+    const ref = extractVirtualImageRef(nodeRaw);
+    if (!ref) return false;
+    if (viId > 0 && Number(ref.id) === viId) return true;
+    const refName = String(ref.name || '').trim().toLowerCase();
+    return !!(refName && viNames.includes(refName));
+  };
+  return (byType.get('nodetype') || []).filter(nt => matchesVI(parseJsonSafe(nt.rawJson)));
+}
+
+function appendVirtualImageGraphNodes(graphNodes, graphEdges, seenNodes, parentId, nodeRaw, byType, level) {
+  const viRef = extractVirtualImageRef(nodeRaw);
+  if (!viRef) return;
+  const virtualImages = discoveryItemsForRefs([viRef], 'virtualimage', byType);
+  virtualImages.forEach(vi => {
+    const viId = `virtualimage-${vi.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(vi, level, 'virtualimage'));
+    graphEdges.push({ from: parentId, to: viId });
+  });
+  if (!virtualImages.length && viRef.id > 0) {
+    const viId = `virtualimage-${viRef.id}`;
+    ensureGraphNode(graphNodes, seenNodes, {
+      id: viId,
+      label: viRef.name || `Virtual Image #${viRef.id}`,
+      sub: `Virtual Image #${viRef.id}`,
+      level,
+    });
+    graphEdges.push({ from: parentId, to: viId });
+  }
+}
+
+function relationTypeSubLabel(typeNorm) {
+  const labels = {
+    instancetype: 'Instance Type',
+    layout: 'Layout',
+    input: 'Input',
+    workflow: 'Workflow',
+    nodetype: 'Node Type',
+    virtualimage: 'Virtual Image',
+  };
+  return labels[typeNorm] || typeNorm;
+}
+
+function graphNodeFromDiscoveryItem(discItem, level, typeNorm) {
+  const t = typeNorm || normType(discItem.type);
+  const sub = relationTypeSubLabel(t);
+  return {
+    id: `${t}-${discItem.id}`,
+    label: discoveryDisplayName(discItem) || discItem.name || sub,
+    sub: `${sub} #${discItem.id || ''}`,
+    level,
+    clickType: t,
+    clickId: discItem.id || 0,
+  };
+}
+
+function ensureGraphNode(nodes, seen, node) {
+  if (!node || !node.id || seen.has(node.id)) return;
+  seen.add(node.id);
+  nodes.push(node);
+}
+
+function relationListRow(label, items, emptyText) {
+  const empty = emptyText || 'none';
+  if (!items || !items.length) {
+    return `<div style="margin-bottom:10px;"><strong>${label}:</strong> <span style="color:var(--text3)">${empty}</span></div>`;
+  }
+  return `<div style="margin-bottom:10px;"><strong>${label}:</strong> ${
+    items.map(x => `${escapeHtml(discoveryDisplayName(x) || x.name || '?')} (#${x.id})`).join(', ')
+  }</div>`;
+}
+
+function resolveInstanceTypeLayouts(itRaw, byType) {
+  const out = [];
+  const seen = new Set();
+  const push = (lay) => {
+    if (!lay) return;
+    const key = `${Number(lay.id || 0)}:${String(lay.name || lay.code || '').trim().toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(lay);
+  };
+
+  discoveryItemsForRefs(extractInstanceTypeLayoutRefs(itRaw), 'layout', byType).forEach(push);
+
+  const addEmbedded = (le) => {
+    if (!le || typeof le !== 'object') return;
+    const code = String(le.code || '').trim().toLowerCase();
+    const lid = Number(le.id || 0);
+    let hit = null;
+    if (lid > 0) hit = (byType.get('layout') || []).find(x => Number(x.id) === lid);
+    if (!hit && code) {
+      hit = (byType.get('layout') || []).find(x => {
+        const lr = parseJsonSafe(x.rawJson);
+        return String(lr.code || lr.layoutCode || '').trim().toLowerCase() === code;
+      });
+    }
+    if (hit) {
+      push(hit);
+      return;
+    }
+    push({
+      id: lid || 0,
+      name: String(le.name || le.code || 'Layout').trim(),
+      type: 'layout',
+      rawJson: JSON.stringify(le),
+    });
+  };
+
+  (itRaw.instanceTypeLayouts || []).forEach(addEmbedded);
+  (itRaw.layouts || []).forEach(addEmbedded);
+  return out;
+}
+
+function layoutRawForRelations(lay, itRaw) {
+  let layoutRaw = parseJsonSafe(lay.rawJson);
+  const layCode = String(layoutRaw.code || lay.name || '').trim().toLowerCase();
+  const layId = Number(lay.id || layoutRaw.id || 0);
+  if ((layoutRaw.containerTypes || []).length || (layoutRaw.nodeTypes || []).length ||
+      (layoutRaw.layoutContainers || []).length || (layoutRaw.taskSets || []).length) {
+    return layoutRaw;
+  }
+  for (const le of (itRaw.instanceTypeLayouts || [])) {
+    if (!le || typeof le !== 'object') continue;
+    if (layId > 0 && Number(le.id) === layId) return le;
+    if (layCode && String(le.code || '').trim().toLowerCase() === layCode) return le;
+  }
+  return layoutRaw;
+}
+
+function resolveLayoutNodeTypes(layoutRaw, byType) {
+  const out = [];
+  const seen = new Set();
+  const push = (nt) => {
+    if (!nt) return;
+    const key = String(nt.id || nt.name || '');
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(nt);
+  };
+
+  discoveryItemsForRefs(extractLayoutDepRefs(layoutRaw).nodeTypes, 'nodetype', byType).forEach(push);
+
+  const tryEmbedded = (ct) => {
+    if (!ct || typeof ct !== 'object') return;
+    let hit = resolveRefFromDiscovery(ct, 'nodetype', byType, ct.name || ct.code);
+    if (hit) {
+      push(hit);
+      return;
+    }
+    const code = String(ct.code || ct.name || '').trim().toLowerCase();
+    if (code) {
+      hit = (byType.get('nodetype') || []).find(x => {
+        const r = parseJsonSafe(x.rawJson);
+        return String(r.code || r.name || '').trim().toLowerCase() === code;
+      });
+      if (hit) {
+        push(hit);
+        return;
+      }
+    }
+    const nid = Number(ct.id || 0);
+    if (nid > 0) {
+      push({
+        id: nid,
+        name: String(ct.name || ct.code || 'Node Type').trim(),
+        type: 'nodetype',
+        rawJson: JSON.stringify(ct),
+      });
+    }
+  };
+
+  (layoutRaw.containerTypes || []).forEach(tryEmbedded);
+  (layoutRaw.nodeTypes || []).forEach(tryEmbedded);
+  (layoutRaw.layoutContainers || []).forEach(x => {
+    if (!x || typeof x !== 'object') return;
+    tryEmbedded(x.containerType || x.nodeType);
+  });
+  return out;
+}
+
+function resolveLayoutWorkflows(layoutRaw, byType) {
+  const deps = extractLayoutDepRefs(layoutRaw);
+  const out = [];
+  const seen = new Set();
+  discoveryItemsForRefs(deps.workflows, 'workflow', byType).forEach(wf => {
+    const key = String(wf.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(wf);
+  });
+  (layoutRaw.taskSets || []).forEach(ts => {
+    const hit = resolveRefFromDiscovery(ts, 'workflow', byType, ts && (ts.name || ts.code));
+    if (!hit) return;
+    const key = String(hit.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(hit);
+  });
+  return out;
+}
+
+function resolveTaskIntegrations(taskRaw, taskItem, discovery) {
+  const out = [];
+  const seen = new Set();
+  const push = (i) => {
+    if (!i) return;
+    const key = String(i.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(i);
+  };
+  const sourceType = String(((taskRaw.file || {}).sourceType) || '').toLowerCase();
+  if (sourceType !== 'repository') return out;
+  const repo = (taskRaw.file || {}).repository || {};
+  const repoId = Number(repo.id || 0);
+  const repoName = String(repo.name || '').trim();
+  const ansibleGitId = String(((taskRaw.taskOptions || {}).ansibleGitId) || '');
+  const localScriptGitId = String(((taskRaw.taskOptions || {}).localScriptGitId) || '');
+  const tt = taskTypeCodeFromRaw(taskRaw);
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(i => {
+      if (normType(i.type) !== 'integration') return;
+      if (repoId > 0 && Number(i.id) === repoId) push(i);
+      if (ansibleGitId && String(i.id) === ansibleGitId) push(i);
+      if (localScriptGitId && String(i.id) === localScriptGitId) push(i);
+      if (repoName && String(i.name || '').toLowerCase() === repoName.toLowerCase()) push(i);
+    });
+  });
+  return out.filter(i => {
+    const ir = parseJsonSafe(i.rawJson);
+    const k = integrationTypeCodeFromRaw(ir, i);
+    if (isAnsibleTaskType(tt)) return k.includes('ansible');
+    if (k.includes('ansible')) return false;
+    return k === 'git' || k.includes('git') || k === '';
+  });
+}
+
+function collectWorkflowTasksAndIntegrations(wfDiscItem, wfRaw, discovery) {
+  const tasksById = new Map();
+  const tasksByName = new Map();
+  (discovery.categories || []).forEach(cat => {
+    (cat.items || []).forEach(i => {
+      if (normType(i.type) !== 'task') return;
+      tasksById.set(Number(i.id || 0), i);
+      tasksByName.set(String(i.name || '').toLowerCase(), i);
+    });
+  });
+
+  const relatedTasks = [];
+  const taskIntegrations = [];
+  const taskRefs = Array.isArray(wfRaw.taskSetTasks) ? wfRaw.taskSetTasks : (Array.isArray(wfRaw.tasks) ? wfRaw.tasks : []);
+  taskRefs.forEach(e => {
+    if (!e || typeof e !== 'object') return;
+    const t = (e.task && typeof e.task === 'object') ? e.task : null;
+    const tid = Number((t && t.id) || e.taskId || e.id || 0);
+    const tname = String((t && t.name) || e.taskName || e.name || '').trim();
+    const pick = (tid > 0 ? tasksById.get(tid) : null) || (tname ? tasksByName.get(tname.toLowerCase()) : null);
+    if (!pick) return;
+    if (!relatedTasks.find(x => Number(x.id) === Number(pick.id))) relatedTasks.push(pick);
+    const tr = parseJsonSafe(pick.rawJson);
+    const ints = resolveTaskIntegrations(tr, pick, discovery);
+    taskIntegrations.push({ task: pick, integrations: ints });
+  });
+  return { relatedTasks, taskIntegrations };
+}
+
+function instanceTypeRelationsFromDiscovery(item, itRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const rows = [];
+  const layouts = resolveInstanceTypeLayouts(itRaw, byType);
+
+  const directInputs = discoveryItemsForRefs(extractOptionTypeRefs(itRaw), 'input', byType);
+  const layoutInputs = [];
+  const layoutNodeTypes = [];
+  const layoutWorkflows = [];
+  const workflowTasks = [];
+  const workflowTaskIntegrations = [];
+  const seenIn = new Set();
+  const seenNT = new Set();
+  const seenWF = new Set();
+
+  layouts.forEach(lay => {
+    const layoutRaw = layoutRawForRelations(lay, itRaw);
+    discoveryItemsForRefs(extractOptionTypeRefs(layoutRaw), 'input', byType).forEach(inp => {
+      if (seenIn.has(String(inp.id))) return;
+      seenIn.add(String(inp.id));
+      layoutInputs.push({ layout: lay, input: inp });
+    });
+    resolveLayoutNodeTypes(layoutRaw, byType).forEach(nt => {
+      if (seenNT.has(String(nt.id))) return;
+      seenNT.add(String(nt.id));
+      layoutNodeTypes.push({ layout: lay, nodeType: nt });
+    });
+    resolveLayoutWorkflows(layoutRaw, byType).forEach(wf => {
+      if (seenWF.has(String(wf.id))) return;
+      seenWF.add(String(wf.id));
+      layoutWorkflows.push({ layout: lay, workflow: wf });
+      const wfRaw = parseJsonSafe(wf.rawJson);
+      const { relatedTasks, taskIntegrations } = collectWorkflowTasksAndIntegrations(wf, wfRaw, discovery);
+      relatedTasks.forEach(t => {
+        if (!workflowTasks.find(x => Number(x.workflow.id) === Number(wf.id) && Number(x.task.id) === Number(t.id))) {
+          workflowTasks.push({ layout: lay, workflow: wf, task: t });
+        }
+      });
+      taskIntegrations.forEach(({ task, integrations }) => {
+        integrations.forEach(integ => {
+          workflowTaskIntegrations.push({ layout: lay, workflow: wf, task, integration: integ });
+        });
+      });
+    });
+  });
+
+  rows.push(relationListRow('Layouts', layouts, 'none found in discovery'));
+  rows.push(relationListRow('Inputs (on instance type)', directInputs, 'none'));
+  rows.push(relationListRow('Inputs (via layouts)', layoutInputs.map(x => x.input), 'none'));
+  rows.push(relationListRow('Node types (via layouts)', layoutNodeTypes.map(x => x.nodeType), 'none'));
+  rows.push(relationListRow('Workflows (via layouts)', layoutWorkflows.map(x => x.workflow), 'none'));
+  rows.push(relationListRow('Tasks (via workflows)', workflowTasks.map(x => x.task), 'none'));
+  rows.push(relationListRow('Integrations (via tasks)', workflowTaskIntegrations.map(x => x.integration), 'none'));
+
+  const rootId = `instancetype-${item.id || 0}`;
+  const graphNodes = [];
+  const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: discoveryDisplayName(item) || item.name || 'Instance Type',
+    sub: `Instance Type #${item.id || ''}`,
+    level: 0,
+    clickType: 'instancetype',
+    clickId: item.id || 0,
+  });
+
+  layouts.forEach(lay => {
+    const layId = `layout-${lay.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(lay, 1, 'layout'));
+    graphEdges.push({ from: rootId, to: layId });
+  });
+
+  directInputs.forEach(inp => {
+    const inId = `input-${inp.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(inp, 1, 'input'));
+    graphEdges.push({ from: rootId, to: inId, label: 'input' });
+  });
+
+  layoutInputs.forEach(({ layout, input }) => {
+    const layId = `layout-${layout.id}`;
+    const inId = `input-${input.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(input, 2, 'input'));
+    graphEdges.push({ from: layId, to: inId });
+  });
+
+  layoutNodeTypes.forEach(({ layout, nodeType }) => {
+    const layId = `layout-${layout.id}`;
+    const ntId = `nodetype-${nodeType.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(nodeType, 2, 'nodetype'));
+    graphEdges.push({ from: layId, to: ntId });
+    appendVirtualImageGraphNodes(graphNodes, graphEdges, seenNodes, ntId, parseJsonSafe(nodeType.rawJson), byType, 3);
+  });
+
+  layoutWorkflows.forEach(({ layout, workflow }) => {
+    const layId = `layout-${layout.id}`;
+    const wfId = `workflow-${workflow.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(workflow, 2, 'workflow'));
+    graphEdges.push({ from: layId, to: wfId });
+  });
+
+  workflowTasks.forEach(({ layout, workflow, task }) => {
+    const wfId = `workflow-${workflow.id}`;
+    const taskId = `task-${task.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(task, 3, 'task'));
+    graphEdges.push({ from: wfId, to: taskId });
+  });
+
+  workflowTaskIntegrations.forEach(({ workflow, task, integration }) => {
+    const taskId = `task-${task.id}`;
+    const intId = `integration-${integration.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(integration, 4, 'integration'));
+    graphEdges.push({ from: taskId, to: intId });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Instance type relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function layoutRelationsFromDiscovery(item, layoutRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const rows = [];
+  const inputs = discoveryItemsForRefs(extractOptionTypeRefs(layoutRaw), 'input', byType);
+  const deps = extractLayoutDepRefs(layoutRaw);
+  const nodeTypes = discoveryItemsForRefs(deps.nodeTypes, 'nodetype', byType);
+  const workflows = discoveryItemsForRefs(deps.workflows, 'workflow', byType);
+
+  rows.push(relationListRow('Inputs', inputs, 'none'));
+  rows.push(relationListRow('Node types', nodeTypes, 'none found in discovery'));
+  rows.push(relationListRow('Workflows', workflows, 'none found in discovery'));
+
+  const rootId = `layout-${item.id || 0}`;
+  const graphNodes = [];
+  const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: item.name || 'Layout',
+    sub: `Layout #${item.id || ''}`,
+    level: 0,
+    clickType: 'layout',
+    clickId: item.id || 0,
+  });
+
+  inputs.forEach(inp => {
+    const inId = `input-${inp.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(inp, 1, 'input'));
+    graphEdges.push({ from: rootId, to: inId });
+  });
+  nodeTypes.forEach(nt => {
+    const ntId = `nodetype-${nt.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(nt, 1, 'nodetype'));
+    graphEdges.push({ from: rootId, to: ntId });
+    appendVirtualImageGraphNodes(graphNodes, graphEdges, seenNodes, ntId, parseJsonSafe(nt.rawJson), byType, 2);
+  });
+  workflows.forEach(wf => {
+    const wfId = `workflow-${wf.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(wf, 1, 'workflow'));
+    graphEdges.push({ from: rootId, to: wfId });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Layout relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function nodeTypeRelationsFromDiscovery(item, nodeRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const rows = [];
+  const viRef = extractVirtualImageRef(nodeRaw);
+  const virtualImages = viRef ? discoveryItemsForRefs([viRef], 'virtualimage', byType) : [];
+
+  rows.push(`<div style="margin-bottom:10px;"><strong>Virtual image:</strong> ${
+    virtualImages.length
+      ? virtualImages.map(x => `${escapeHtml(discoveryDisplayName(x) || x.name)} (#${x.id})`).join(', ')
+      : (viRef && viRef.name ? `${escapeHtml(viRef.name)} (#${viRef.id}) <span style="color:var(--text3)">not in discovery list</span>` : '<span style="color:var(--text3)">none</span>')
+  }</div>`);
+
+  const rootId = `nodetype-${item.id || 0}`;
+  const graphNodes = [];
+  const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: item.name || 'Node Type',
+    sub: `Node Type #${item.id || ''}`,
+    level: 0,
+    clickType: 'nodetype',
+    clickId: item.id || 0,
+  });
+
+  appendVirtualImageGraphNodes(graphNodes, graphEdges, seenNodes, rootId, nodeRaw, byType, 1);
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Node type relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function virtualImageRelationsFromDiscovery(item, viRaw, discovery) {
+  const byType = categoryItemsByNormType(discovery);
+  const nodeTypes = nodeTypesUsingVirtualImage(item, viRaw, byType);
+  const rows = [
+    relationListRow('Node types', nodeTypes, 'none found in discovery'),
+  ];
+
+  const rootId = `virtualimage-${item.id || 0}`;
+  const graphNodes = [];
+  const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: discoveryDisplayName(item) || item.name || 'Virtual Image',
+    sub: `Virtual Image #${item.id || ''}`,
+    level: 0,
+    clickType: 'virtualimage',
+    clickId: item.id || 0,
+  });
+
+  nodeTypes.forEach(nt => {
+    const ntId = `nodetype-${nt.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(nt, 1, 'nodetype'));
+    graphEdges.push({ from: rootId, to: ntId });
+  });
+
+  return `<div class="panel" style="margin-top:10px;">
+    <div class="panel-title" style="font-size:14px;">Virtual image relations</div>
+    ${rows.join('')}
+    ${renderRelationGraph(graphNodes, graphEdges)}
+  </div>`;
+}
+
+function resolveCatalogLayoutRef(catRaw, instanceTypeDiscItem, byType) {
+  const cfg = (catRaw && catRaw.config) || {};
+  const candidates = [
+    cfg.layout,
+    catRaw && catRaw.instanceTypeLayout,
+    catRaw && catRaw.layout,
+  ].filter(Boolean);
+  for (const layoutRef of candidates) {
+    if (!layoutRef || typeof layoutRef !== 'object') continue;
+    const codeHint = String(layoutRef.code || layoutRef.name || '').trim();
+    let hit = resolveRefFromDiscovery(layoutRef, 'layout', byType, codeHint);
+    if (hit) return hit;
+
+    const wantCode = codeHint.toLowerCase();
+    if (wantCode) {
+      for (const lay of (byType.get('layout') || [])) {
+        const lr = parseJsonSafe(lay.rawJson);
+        const layCode = String(lr.code || lr.layoutCode || '').trim().toLowerCase();
+        if (layCode && layCode === wantCode) return lay;
+      }
+    }
+
+    if (instanceTypeDiscItem && wantCode) {
+      const itRaw = parseJsonSafe(instanceTypeDiscItem.rawJson);
+      for (const le of (itRaw.instanceTypeLayouts || [])) {
+        if (!le || typeof le !== 'object') continue;
+        const leCode = String(le.code || '').trim().toLowerCase();
+        if (leCode !== wantCode) continue;
+        const lid = Number(le.id || 0);
+        if (lid > 0) {
+          hit = resolveRefFromDiscovery({ id: lid, code: le.code }, 'layout', byType, codeHint);
+          if (hit) return hit;
+        }
+        for (const lay of (byType.get('layout') || [])) {
+          const lr = parseJsonSafe(lay.rawJson);
+          if (String(lr.code || '').trim().toLowerCase() === wantCode) return lay;
+        }
+        const label = String(le.name || le.code || codeHint || 'Layout').trim();
+        return {
+          id: lid || 0,
+          name: label,
+          type: 'layout',
+          rawJson: JSON.stringify(le),
+        };
+      }
+    }
   }
   return null;
 }
@@ -3683,12 +4829,23 @@ function catalogRelationsFromDiscovery(item, catRaw, discovery) {
   rel.instanceType =
     resolveRefFromDiscovery(catRaw.instanceType, 'instancetype', byType) ||
     resolveRefFromDiscovery(catRaw.instanceTypeLayout && catRaw.instanceTypeLayout.instanceType, 'instancetype', byType);
+  if (!rel.instanceType && catRaw.config && catRaw.config.type) {
+    const want = String(catRaw.config.type).trim().toLowerCase();
+    for (const it of (byType.get('instancetype') || [])) {
+      const ir = parseJsonSafe(it.rawJson);
+      if (String(ir.code || '').trim().toLowerCase() === want) {
+        rel.instanceType = it;
+        break;
+      }
+    }
+  }
 
   const pushUnique = (arr, itemObj) => {
     if (!itemObj) return;
     if (!arr.find(x => Number(x.id) === Number(itemObj.id))) arr.push(itemObj);
   };
 
+  pushUnique(rel.layouts, resolveCatalogLayoutRef(catRaw, rel.instanceType, byType));
   pushUnique(rel.layouts, resolveRefFromDiscovery(catRaw.instanceTypeLayout, 'layout', byType));
   (catRaw.instanceTypeLayouts || []).forEach(x => pushUnique(rel.layouts, resolveRefFromDiscovery(x, 'layout', byType)));
   (catRaw.layouts || []).forEach(x => pushUnique(rel.layouts, resolveRefFromDiscovery(x, 'layout', byType)));
@@ -3712,9 +4869,38 @@ function catalogRelationsFromDiscovery(item, catRaw, discovery) {
   rows.push(`<div style="margin-bottom:10px;"><strong>Instance Type:</strong> ${
     rel.instanceType ? `${escapeHtml(rel.instanceType.name)} (#${rel.instanceType.id})` : '<span style="color:var(--text3)">none</span>'
   }</div>`);
-  rows.push(`<div style="margin-bottom:10px;"><strong>Layouts:</strong> ${
-    rel.layouts.length ? rel.layouts.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
-  }</div>`);
+  const layoutNodeTypes = [];
+  const layoutWorkflows = [];
+  const seenNT = new Set();
+  const seenWF = new Set();
+  rel.layouts.forEach(lay => {
+    let layoutRaw = parseJsonSafe(lay.rawJson);
+    const layCode = String(layoutRaw.code || lay.name || '').trim().toLowerCase();
+    if (rel.instanceType && !(layoutRaw.containerTypes || []).length && !(layoutRaw.nodeTypes || []).length) {
+      const itRaw = parseJsonSafe(rel.instanceType.rawJson);
+      for (const le of (itRaw.instanceTypeLayouts || [])) {
+        if (!le || typeof le !== 'object') continue;
+        if (String(le.code || '').trim().toLowerCase() === layCode) {
+          layoutRaw = le;
+          break;
+        }
+      }
+    }
+    const deps = extractLayoutDepRefs(layoutRaw);
+    discoveryItemsForRefs(deps.nodeTypes, 'nodetype', byType).forEach(nt => {
+      if (seenNT.has(String(nt.id))) return;
+      seenNT.add(String(nt.id));
+      layoutNodeTypes.push({ layout: lay, nodeType: nt });
+    });
+    discoveryItemsForRefs(deps.workflows, 'workflow', byType).forEach(wf => {
+      if (seenWF.has(String(wf.id))) return;
+      seenWF.add(String(wf.id));
+      layoutWorkflows.push({ layout: lay, workflow: wf });
+    });
+  });
+
+  rows.push(relationListRow('Layouts', rel.layouts, 'none found in discovery'));
+  rows.push(relationListRow('Node types (via layouts)', layoutNodeTypes.map(x => x.nodeType), 'none'));
   rows.push(`<div style="margin-bottom:10px;"><strong>Workflows:</strong> ${
     rel.workflows.length ? rel.workflows.map(x => `${escapeHtml(x.name)} (#${x.id})`).join(', ') : '<span style="color:var(--text3)">none</span>'
   }</div>`);
@@ -3729,37 +4915,64 @@ function catalogRelationsFromDiscovery(item, catRaw, discovery) {
   }</div>`);
 
   const rootId = `catalog-${item.id || 0}`;
-  const graphNodes = [{ id: rootId, label: item.name || 'Catalog Item', sub: `Catalog #${item.id || ''}`, level: 0, clickType: 'catalogitem', clickId: item.id || 0 }];
+  const graphNodes = [];
   const graphEdges = [];
+  const seenNodes = new Set();
+  ensureGraphNode(graphNodes, seenNodes, {
+    id: rootId,
+    label: discoveryDisplayName(item) || item.name || 'Catalog Item',
+    sub: `Catalog #${item.id || ''}`,
+    level: 0,
+    clickType: 'catalogitem',
+    clickId: item.id || 0,
+  });
+
+  const itId = rel.instanceType ? `instancetype-${rel.instanceType.id}` : '';
   if (rel.instanceType) {
-    const id = `it-${rel.instanceType.id}`;
-    graphNodes.push({ id, label: rel.instanceType.name, sub: `InstanceType #${rel.instanceType.id}`, level: 1, clickType: 'instancetype', clickId: rel.instanceType.id });
-    graphEdges.push({ from: rootId, to: id });
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(rel.instanceType, 1, 'instancetype'));
+    graphEdges.push({ from: rootId, to: itId });
   }
-  rel.layouts.forEach((x, idx) => {
-    const id = `lay-${x.id || idx}`;
-    graphNodes.push({ id, label: x.name || 'Layout', sub: `Layout #${x.id || ''}`, level: 1, clickType: 'layout', clickId: x.id || 0 });
-    graphEdges.push({ from: rootId, to: id });
+
+  const layoutParent = itId || rootId;
+  const layoutLevel = rel.instanceType ? 2 : 1;
+  rel.layouts.forEach(lay => {
+    const layId = `layout-${lay.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(lay, layoutLevel, 'layout'));
+    graphEdges.push({ from: layoutParent, to: layId });
+    layoutNodeTypes.filter(li => Number(li.layout.id) === Number(lay.id)).forEach(({ nodeType }) => {
+      const ntId = `nodetype-${nodeType.id}`;
+      ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(nodeType, layoutLevel + 1, 'nodetype'));
+      graphEdges.push({ from: layId, to: ntId });
+      appendVirtualImageGraphNodes(graphNodes, graphEdges, seenNodes, ntId, parseJsonSafe(nodeType.rawJson), byType, layoutLevel + 2);
+    });
+    layoutWorkflows.filter(li => Number(li.layout.id) === Number(lay.id)).forEach(({ workflow }) => {
+      const wfId = `workflow-${workflow.id}`;
+      ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(workflow, layoutLevel + 1, 'workflow'));
+      graphEdges.push({ from: layId, to: wfId });
+    });
   });
-  rel.workflows.forEach((x, idx) => {
-    const id = `wf-${x.id || idx}`;
-    graphNodes.push({ id, label: x.name || 'Workflow', sub: `Workflow #${x.id || ''}`, level: 1, clickType: 'workflow', clickId: x.id || 0 });
-    graphEdges.push({ from: rootId, to: id });
+
+  const depParent = itId || rootId;
+  const depLevel = rel.instanceType ? 2 : 1;
+  rel.workflows.forEach(wf => {
+    const wfId = `workflow-${wf.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(wf, depLevel, 'workflow'));
+    graphEdges.push({ from: depParent, to: wfId });
   });
-  rel.forms.forEach((x, idx) => {
-    const id = `form-${x.id || idx}`;
-    graphNodes.push({ id, label: x.name || 'Form', sub: `Form #${x.id || ''}`, level: 2, clickType: 'form', clickId: x.id || 0 });
-    graphEdges.push({ from: rootId, to: id });
+  rel.forms.forEach(fm => {
+    const fmId = `form-${fm.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(fm, depLevel, 'form'));
+    graphEdges.push({ from: depParent, to: fmId });
   });
-  rel.inputs.forEach((x, idx) => {
-    const id = `in-${x.id || idx}`;
-    graphNodes.push({ id, label: x.name || 'Input', sub: `Input #${x.id || ''}`, level: 2, clickType: 'input', clickId: x.id || 0 });
-    graphEdges.push({ from: rootId, to: id });
+  rel.inputs.forEach(inp => {
+    const inId = `input-${inp.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(inp, depLevel, 'input'));
+    graphEdges.push({ from: depParent, to: inId });
   });
-  rel.optionLists.forEach((x, idx) => {
-    const id = `olist-${x.id || idx}`;
-    graphNodes.push({ id, label: x.name || 'Option List', sub: `OptionList #${x.id || ''}`, level: 2, clickType: 'optionlist', clickId: x.id || 0 });
-    graphEdges.push({ from: rootId, to: id });
+  rel.optionLists.forEach(ol => {
+    const olId = `optionlist-${ol.id}`;
+    ensureGraphNode(graphNodes, seenNodes, graphNodeFromDiscoveryItem(ol, depLevel, 'optionlist'));
+    graphEdges.push({ from: depParent, to: olId });
   });
 
   return `<div class="panel" style="margin-top:10px;">
@@ -4361,9 +5574,11 @@ function renderCategories() {
   const visibleByParent = {};
   d.categories.forEach(cat => {
     if (filter !== 'ALL' && cat.name !== filter) return;
-    const filtered = cat.items.filter(item =>
-      !search || item.name.toLowerCase().includes(search) || (item.subType||'').toLowerCase().includes(search)
-    );
+    const filtered = cat.items.filter(item => {
+      if (!search) return true;
+      const label = discoveryDisplayName(item);
+      return label.toLowerCase().includes(search) || (item.subType || '').toLowerCase().includes(search);
+    });
     if (!filtered.length) return;
     const parent = parentPathLabel(cat) || 'Other';
     if (!visibleByParent[parent]) visibleByParent[parent] = [];
@@ -4409,15 +5624,18 @@ function renderCategories() {
       list.className = 'item-list open';
 
       filtered.forEach(item => {
+        const displayName = discoveryDisplayName(item);
         const checked = state.selected.has(`${cat.name}:${item.id}`);
         const row = document.createElement('div');
         row.className = 'item-row';
         row.innerHTML = `
           <input type="checkbox" class="item-check" ${checked ? 'checked' : ''}
             onchange="toggleItem('${cat.name}', ${item.id}, this.checked)">
-          <span class="item-name" title="${item.name}">${item.name || '<unnamed>'}</span>
+          <span class="item-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName || '<unnamed>')}</span>
           ${item.subType ? `<span class="item-subtype">${item.subType}</span>` : ''}
           <span class="item-id">#${item.id}</span>
+          <button type="button" class="btn-icon" title="View relations" style="margin-left:auto;font-size:12px;padding:2px 6px;"
+            onclick="event.stopPropagation(); openMigrationRelations('${cat.name.replace(/'/g, "\\'")}', ${item.id})">🕸</button>
         `;
         list.appendChild(row);
       });
@@ -4500,7 +5718,7 @@ function goToDestination() {
   if (state.selected.size === 0) return;
   setStep(4);
   showView('view-destination');
-  renderPreview();
+  void renderPreview();
 }
 
 function goBack() {
@@ -4513,7 +5731,9 @@ function normType(t) {
   if (x === 'instancetype') return 'instancetype';
   if (x === 'layout') return 'layout';
   if (x === 'nodetype' || x === 'containertype') return 'nodetype';
+  if (x === 'virtualimage') return 'virtualimage';
   if (x === 'workflow' || x === 'taskset') return 'workflow';
+  if (x === 'input' || x === 'optiontype') return 'input';
   return x;
 }
 
@@ -4525,30 +5745,82 @@ function depIdFromObj(v) {
   return v && typeof v === 'object' ? Number(v.id || 0) : 0;
 }
 
-function extractLayoutDepIDs(layoutRaw) {
-  const nodeTypeIDs = new Set();
-  const workflowIDs = new Set();
-  (layoutRaw.containerTypes || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) nodeTypeIDs.add(id); });
-  (layoutRaw.nodeTypes || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) nodeTypeIDs.add(id); });
+function depCategoryLabel(typeNorm) {
+  switch (typeNorm) {
+    case 'instancetype': return 'Instance Types';
+    case 'layout': return 'Layouts';
+    case 'nodetype': return 'Node Types';
+    case 'virtualimage': return 'Virtual Images';
+    case 'workflow': return 'Workflows';
+    case 'task': return 'Tasks';
+    case 'input': return 'Inputs';
+    case 'form': return 'Forms';
+    default: return typeNorm || 'Dependencies';
+  }
+}
+
+function depRefFromObj(v) {
+  const id = depIdFromObj(v);
+  if (id <= 0) return null;
+  const name = v && typeof v === 'object'
+    ? String(v.name || v.fileName || v.imageName || v.shortName || v.code || '').trim()
+    : '';
+  return { id, name };
+}
+
+function extractLayoutDepRefs(layoutRaw) {
+  const nodeTypes = [];
+  const workflows = [];
+  const seenNT = new Set();
+  const seenWF = new Set();
+  const addNT = (x) => {
+    const ref = depRefFromObj(x);
+    if (!ref || seenNT.has(ref.id)) return;
+    seenNT.add(ref.id);
+    nodeTypes.push(ref);
+  };
+  const addWF = (x) => {
+    const ref = depRefFromObj(x);
+    if (!ref || seenWF.has(ref.id)) return;
+    seenWF.add(ref.id);
+    workflows.push(ref);
+  };
+  (layoutRaw.containerTypes || []).forEach(addNT);
+  (layoutRaw.nodeTypes || []).forEach(addNT);
   (layoutRaw.layoutContainers || []).forEach(x => {
     if (!x || typeof x !== 'object') return;
-    const c = depIdFromObj(x.containerType);
-    const n = depIdFromObj(x.nodeType);
-    if (c > 0) nodeTypeIDs.add(c);
-    if (n > 0) nodeTypeIDs.add(n);
+    addNT(x.containerType);
+    addNT(x.nodeType);
   });
-  [layoutRaw.taskSet, layoutRaw.workflow, layoutRaw.provisionWorkflow].forEach(x => {
-    const id = depIdFromObj(x);
-    if (id > 0) workflowIDs.add(id);
-  });
-  return { nodeTypeIDs: [...nodeTypeIDs], workflowIDs: [...workflowIDs] };
+  (layoutRaw.taskSets || []).forEach(addWF);
+  [layoutRaw.taskSet, layoutRaw.workflow, layoutRaw.provisionWorkflow].forEach(addWF);
+  return { nodeTypes, workflows };
+}
+
+function extractLayoutDepIDs(layoutRaw) {
+  const deps = extractLayoutDepRefs(layoutRaw);
+  return {
+    nodeTypeIDs: deps.nodeTypes.map(r => r.id),
+    workflowIDs: deps.workflows.map(r => r.id),
+  };
+}
+
+function extractInstanceTypeLayoutRefs(itRaw) {
+  const refs = [];
+  const seen = new Set();
+  const add = (x) => {
+    const ref = depRefFromObj(x);
+    if (!ref || seen.has(ref.id)) return;
+    seen.add(ref.id);
+    refs.push(ref);
+  };
+  (itRaw.instanceTypeLayouts || []).forEach(add);
+  (itRaw.layouts || []).forEach(add);
+  return refs;
 }
 
 function extractInstanceTypeLayoutIDs(itRaw) {
-  const ids = new Set();
-  (itRaw.instanceTypeLayouts || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) ids.add(id); });
-  (itRaw.layouts || []).forEach(x => { const id = depIdFromObj(x); if (id > 0) ids.add(id); });
-  return [...ids];
+  return extractInstanceTypeLayoutRefs(itRaw).map(r => r.id);
 }
 
 function extractWorkflowTaskIDs(wfRaw) {
@@ -4561,10 +5833,127 @@ function extractWorkflowTaskIDs(wfRaw) {
   return [...ids];
 }
 
+function extractOptionTypeRefs(raw) {
+  const refs = [];
+  const seen = new Set();
+  (raw.optionTypes || []).forEach(x => {
+    if (!x || typeof x !== 'object') return;
+    const id = Number(x.id || 0);
+    if (id <= 0 || seen.has(id)) return;
+    seen.add(id);
+    const name = String(x.name || x.fieldLabel || x.code || x.fieldName || '').trim();
+    refs.push({ id, name: name || `input #${id}` });
+  });
+  return refs;
+}
+
+function instanceTypeRawNeedsEnrich(raw) {
+  if (!raw || typeof raw !== 'object') return true;
+  const layouts = raw.instanceTypeLayouts || [];
+  if (!layouts.length) return !(raw.optionTypes || []).length;
+  const hasDeepLayout = layouts.some(l => l && typeof l === 'object' &&
+    ((l.optionTypes && l.optionTypes.length) || (l.containerTypes && l.containerTypes.length) ||
+     (l.nodeTypes && l.nodeTypes.length) || (l.taskSets && l.taskSets.length) ||
+     (l.layoutContainers && l.layoutContainers.length)));
+  return !hasDeepLayout;
+}
+
+function processInstanceTypeEmbeddedDeps(raw, itemLabel, pushDep) {
+  extractOptionTypeRefs(raw).forEach(ref => {
+    pushDep('input', ref, `instance type "${itemLabel}"`, true);
+  });
+  (raw.instanceTypeLayouts || []).forEach(layoutObj => {
+    if (!layoutObj || typeof layoutObj !== 'object') return;
+    const ref = depRefFromObj(layoutObj);
+    if (!ref) return;
+    const layoutLabel = ref.name || `#${ref.id}`;
+    pushDep('layout', ref, `instance type "${itemLabel}"`, true);
+    extractOptionTypeRefs(layoutObj).forEach(optRef => {
+      pushDep('input', optRef, `layout "${layoutLabel}"`, true);
+    });
+    const deps = extractLayoutDepRefs(layoutObj);
+    deps.nodeTypes.forEach(nt => pushDep('nodetype', nt, `layout "${layoutLabel}"`, true));
+    deps.workflows.forEach(wf => pushDep('workflow', wf, `layout "${layoutLabel}"`, true));
+  });
+}
+
+function nodeTypeRawNeedsEnrich(raw) {
+  return !extractVirtualImageRef(raw);
+}
+
+async function enrichDiscoveryNodeTypes(discovery, selectedKeys, sourceOverride) {
+  const source = sourceOverride || migrationApplFromSide('src');
+  const ids = [];
+  selectedKeys.forEach(k => {
+    const [cat, idStr] = k.split(':');
+    const catData = (discovery.categories || []).find(c => c.name === cat);
+    const item = catData && (catData.items || []).find(i => i.id === Number(idStr));
+    if (!item || normType(item.type) !== 'nodetype') return;
+    const raw = parseItemRaw(item);
+    if (!nodeTypeRawNeedsEnrich(raw)) return;
+    ids.push(Number(item.id));
+  });
+  if (!ids.length) return discovery;
+  if (!source.profileId && !source.url) return discovery;
+  if (!source.profileId && !source.token && !(source.username && source.password)) return discovery;
+  try {
+    const res = await api('/api/node-type-details', 'POST', { source, ids });
+    const details = res.nodeTypes || {};
+    if (!Object.keys(details).length) return discovery;
+    const d = JSON.parse(JSON.stringify(discovery));
+    d.categories.forEach(cat => {
+      (cat.items || []).forEach(item => {
+        const key = String(item.id);
+        if (details[key] && normType(item.type) === 'nodetype') {
+          item.rawJson = JSON.stringify(details[key]);
+        }
+      });
+    });
+    return d;
+  } catch (_) {
+    return discovery;
+  }
+}
+
+async function enrichDiscoveryInstanceTypes(discovery, selectedKeys, sourceOverride) {
+  const source = sourceOverride || migrationApplFromSide('src');
+  const ids = [];
+  selectedKeys.forEach(k => {
+    const [cat, idStr] = k.split(':');
+    const catData = (discovery.categories || []).find(c => c.name === cat);
+    const item = catData && (catData.items || []).find(i => i.id === Number(idStr));
+    if (!item || normType(item.type) !== 'instancetype') return;
+    const raw = parseItemRaw(item);
+    if (!instanceTypeRawNeedsEnrich(raw)) return;
+    ids.push(Number(item.id));
+  });
+  if (!ids.length) return discovery;
+  if (!source.profileId && !source.url) return discovery;
+  if (!source.profileId && !source.token && !(source.username && source.password)) return discovery;
+  try {
+    const res = await api('/api/instance-type-details', 'POST', { source, ids });
+    const details = res.instanceTypes || {};
+    if (!Object.keys(details).length) return discovery;
+    const d = JSON.parse(JSON.stringify(discovery));
+    d.categories.forEach(cat => {
+      (cat.items || []).forEach(item => {
+        const key = String(item.id);
+        if (details[key] && normType(item.type) === 'instancetype') {
+          item.rawJson = JSON.stringify(details[key]);
+        }
+      });
+    });
+    return d;
+  } catch (_) {
+    return discovery;
+  }
+}
+
 function computeAutoIncludedDependencies(discovery, selectedKeys) {
   const byTypeId = new Map();
   const selectedByTypeId = new Set();
   const unresolved = [];
+  const runtimeDeps = new Map();
   (discovery.categories || []).forEach(cat => {
     (cat.items || []).forEach(item => {
       byTypeId.set(`${normType(item.type)}:${item.id}`, item);
@@ -4578,45 +5967,108 @@ function computeAutoIncludedDependencies(discovery, selectedKeys) {
   });
 
   const auto = new Map();
-  const queue = [...selectedByTypeId];
-  const seen = new Set(queue);
+  const queue = [...selectedByTypeId].map(key => ({ key, runtimeOK: false }));
+  const seen = new Set(selectedByTypeId);
 
-  const pushDep = (typeNorm, id, ownerLabel) => {
+  const pushDep = (typeNorm, ref, ownerLabel, runtimeOK) => {
+    const id = ref.id;
+    const hintName = ref.name || '';
     const key = `${typeNorm}:${id}`;
     const item = byTypeId.get(key);
+    const category = depCategoryLabel(typeNorm);
     if (!item) {
-      unresolved.push(`${ownerLabel} requires ${typeNorm} #${id}, not present in discovery`);
+      const label = hintName || `#${id}`;
+      const entry = { type: typeNorm, id, name: label, category, via: ownerLabel };
+      if (runtimeOK) {
+        runtimeDeps.set(key, entry);
+      } else {
+        unresolved.push({
+          ...entry,
+          message: `${ownerLabel} requires ${category} "${label}" (#${id}), not in discovery`,
+        });
+      }
       return;
     }
     if (!selectedByTypeId.has(key) && !auto.has(key)) auto.set(key, item);
     if (!seen.has(key)) {
       seen.add(key);
-      queue.push(key);
+      queue.push({ key, runtimeOK });
     }
   };
 
   while (queue.length) {
-    const key = queue.shift();
+    const { key, runtimeOK } = queue.shift();
     const item = byTypeId.get(key);
     if (!item) continue;
     const raw = parseItemRaw(item);
     const t = normType(item.type);
+    const itemLabel = discoveryDisplayName(item) || item.name || `#${item.id}`;
     if (t === 'instancetype') {
-      extractInstanceTypeLayoutIDs(raw).forEach(id => pushDep('layout', id, `instance type "${item.name}"`));
+      processInstanceTypeEmbeddedDeps(raw, itemLabel, pushDep);
     } else if (t === 'layout') {
-      const deps = extractLayoutDepIDs(raw);
-      deps.nodeTypeIDs.forEach(id => pushDep('nodetype', id, `layout "${item.name}"`));
-      deps.workflowIDs.forEach(id => pushDep('workflow', id, `layout "${item.name}"`));
+      extractOptionTypeRefs(raw).forEach(ref => pushDep('input', ref, `layout "${itemLabel}"`, runtimeOK));
+      const deps = extractLayoutDepRefs(raw);
+      deps.nodeTypes.forEach(ref => pushDep('nodetype', ref, `layout "${itemLabel}"`, runtimeOK));
+      deps.workflows.forEach(ref => pushDep('workflow', ref, `layout "${itemLabel}"`, runtimeOK));
     } else if (t === 'workflow') {
-      extractWorkflowTaskIDs(raw).forEach(id => pushDep('task', id, `workflow "${item.name}"`));
+      extractOptionTypeRefs(raw).forEach(ref => pushDep('input', ref, `workflow "${itemLabel}"`, runtimeOK));
+      extractWorkflowTaskIDs(raw).forEach(id => {
+        pushDep('task', { id, name: '' }, `workflow "${itemLabel}"`, runtimeOK);
+      });
+    } else if (t === 'catalogitem') {
+      const cfg = raw.config || {};
+      const itCode = String(cfg.type || '').trim().toLowerCase();
+      if (itCode) {
+        for (const [, discItem] of byTypeId) {
+          if (normType(discItem.type) !== 'instancetype') continue;
+          const ir = parseItemRaw(discItem);
+          if (String(ir.code || '').trim().toLowerCase() !== itCode) continue;
+          pushDep('instancetype', { id: discItem.id, name: discoveryDisplayName(discItem) }, `catalog item "${itemLabel}"`, runtimeOK);
+          break;
+        }
+      }
     }
   }
 
-  return { autoItems: [...auto.values()], unresolved };
+  return {
+    autoItems: [...auto.values()],
+    runtimeDeps: [...runtimeDeps.values()],
+    unresolved,
+  };
 }
 
-function renderPreview() {
-  const d = state.discovery;
+function renderDepPreviewGroups(items, opts = {}) {
+  if (!items.length) return '';
+  const byCat = {};
+  items.forEach(entry => {
+    const cat = entry.category || entry.categoryName || 'Dependencies';
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(entry);
+  });
+  const border = opts.borderColor || '#335c4d';
+  const fontSize = opts.fontSize || '11px';
+  let html = '';
+  Object.entries(byCat).forEach(([cat, rows]) => {
+    html += `<div style="margin-bottom:8px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">${catIcon(cat)} ${escapeHtml(cat)} (${rows.length})</div>
+      ${rows.map(row => {
+        const name = escapeHtml(row.name || row.label || `#${row.id}`);
+        const id = row.id ? ` <span style="color:var(--text3)">#${row.id}</span>` : '';
+        const via = row.via ? ` <span style="color:var(--text3)">— ${escapeHtml(row.via)}</span>` : '';
+        const msg = row.message ? ` <span style="color:var(--text3)">— ${escapeHtml(row.message)}</span>` : '';
+        return `<div style="padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:${fontSize};border-left:2px solid ${border};margin:2px 0;color:var(--text2);">${name}${id}${via}${msg}</div>`;
+      }).join('')}
+    </div>`;
+  });
+  return html;
+}
+
+async function renderPreview() {
+  const previewHost = document.getElementById('autoIncludePreview');
+  if (previewHost) {
+    previewHost.innerHTML = '<div class="alert info" style="margin-bottom:10px;"><span>⏳</span><span>Loading dependency preview…</span></div>';
+  }
+  let d = await enrichDiscoveryInstanceTypes(state.discovery, [...state.selected]);
   const byCategory = {};
   state.selected.forEach(key => {
     const [cat, idStr] = key.split(':');
@@ -4632,35 +6084,42 @@ function renderPreview() {
   let html = '';
   Object.entries(byCategory).forEach(([cat, items]) => {
     html += `<div style="margin-bottom:12px;">
-      <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:6px; padding: 0 4px; text-transform:uppercase; letter-spacing:0.5px;">${catIcon(cat)} ${cat} (${items.length})</div>
-      ${items.map(i => `<div style="padding:6px 12px; font-family:'JetBrains Mono',monospace; font-size:12px; border-left:2px solid var(--border2); margin:2px 0; color:var(--text);">${i.name}</div>`).join('')}
+      <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:6px; padding: 0 4px; text-transform:uppercase; letter-spacing:0.5px;">${catIcon(cat)} ${escapeHtml(cat)} (${items.length})</div>
+      ${items.map(i => `<div style="padding:6px 12px; font-family:'JetBrains Mono',monospace; font-size:12px; border-left:2px solid var(--border2); margin:2px 0; color:var(--text);">${escapeHtml(discoveryDisplayName(i))}</div>`).join('')}
     </div>`;
   });
 
   document.getElementById('previewList').innerHTML = html || '<div class="empty"><p>No items selected</p></div>';
 
   const dep = computeAutoIncludedDependencies(d, [...state.selected]);
-  const autoByCat = {};
-  dep.autoItems.forEach(item => {
-    const c = item.category || 'Dependencies';
-    if (!autoByCat[c]) autoByCat[c] = [];
-    autoByCat[c].push(item);
-  });
+  const autoRows = dep.autoItems.map(item => ({
+    name: discoveryDisplayName(item),
+    id: item.id,
+    category: item.category || depCategoryLabel(normType(item.type)),
+  }));
+  const runtimeRows = (dep.runtimeDeps || []).map(row => ({
+    ...row,
+    message: 'loaded from source during migration',
+  }));
   let depHtml = '';
-  const depCount = dep.autoItems.length;
+  const depCount = autoRows.length;
+  const runtimeCount = runtimeRows.length;
+  const unresolvedCount = dep.unresolved.length;
+
   if (depCount > 0) {
-    depHtml += `<div class="alert info" style="margin-bottom:10px;"><span>ℹ</span><span><strong>${depCount}</strong> related dependency item(s) will be auto-included during migration.</span></div>`;
-    Object.entries(autoByCat).forEach(([cat, items]) => {
-      depHtml += `<div style="margin-bottom:8px;">
-        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">${catIcon(cat)} ${escapeHtml(cat)} (${items.length})</div>
-        ${items.map(i => `<div style="padding:4px 10px;font-family:'JetBrains Mono',monospace;font-size:11px;border-left:2px solid #335c4d;margin:2px 0;color:var(--text2);">${escapeHtml(i.name)}</div>`).join('')}
-      </div>`;
-    });
-  } else {
+    depHtml += `<div class="alert info" style="margin-bottom:10px;"><span>ℹ</span><span><strong>${depCount}</strong> related dependency item(s) from discovery will be auto-included.</span></div>`;
+    depHtml += renderDepPreviewGroups(autoRows, { borderColor: '#335c4d' });
+  }
+  if (runtimeCount > 0) {
+    depHtml += `<div class="alert info" style="margin-bottom:10px;"><span>ℹ</span><span><strong>${runtimeCount}</strong> dependent item(s) are not in discovery but will be resolved from the source appliance during migration.</span></div>`;
+    depHtml += renderDepPreviewGroups(runtimeRows, { borderColor: '#2d4a6f' });
+  }
+  if (depCount === 0 && runtimeCount === 0 && unresolvedCount === 0) {
     depHtml = '<div class="alert ok" style="margin-bottom:10px;"><span>✓</span><span>No additional dependencies will be auto-included.</span></div>';
   }
-  if (dep.unresolved.length) {
-    depHtml += `<div class="alert warn"><span>⚠</span><span>${dep.unresolved.length} dependency reference(s) were not found in current discovery and may block migration.</span></div>`;
+  if (unresolvedCount > 0) {
+    depHtml += `<div class="alert warn" style="margin-bottom:8px;"><span>⚠</span><span><strong>${unresolvedCount}</strong> dependency reference(s) were not found in discovery and may block migration.</span></div>`;
+    depHtml += renderDepPreviewGroups(dep.unresolved, { borderColor: '#7c5c1e', fontSize: '11px' });
   }
   document.getElementById('autoIncludePreview').innerHTML = depHtml;
 }
@@ -4714,22 +6173,29 @@ async function startMigration() {
   showView('view-results');
   document.getElementById('migrationRunning').classList.remove('hidden');
   document.getElementById('migrationDone').classList.add('hidden');
+  resetMigrationProgressUI();
+  state.migrationQueue = [];
 
-  const total = items.length;
-  let done = 0;
-  document.getElementById('migrationMsg').textContent = `Migrating ${total} items...`;
+  const catalogCount = items.filter(i => normType(i.type) === 'catalogitem').length;
+  const parallelHint = catalogCount > 1 ? ` · ${catalogCount} catalog items will migrate in parallel` : '';
+  document.getElementById('migrationMsg').textContent = `Preparing migration (${items.length} selected${parallelHint})…`;
 
   try {
-    const res = await api('/api/migrate', 'POST', {
+    const res = await apiMigrateStream('/api/migrate?stream=1', {
       source,
       destination,
       items,
       discoveryId: state.currentDiscoveryId || 0,
       discoveryTime: state.currentDiscoveryTime || '',
-      httpDebug: document.getElementById('httpDebug').checked
-    });
+      httpDebug: document.getElementById('httpDebug').checked,
+      parallelCatalog: 0
+    }, updateMigrationProgressUI);
 
     state.allResults = res.results;
+    document.getElementById('migrationProgress').style.width = '100%';
+    if (state.migrationQueue && state.migrationQueue.length) {
+      renderMigrationQueue(state.migrationQueue, -1, state.migrationQueue.length);
+    }
     document.getElementById('migrationRunning').classList.add('hidden');
     document.getElementById('migrationDone').classList.remove('hidden');
 
@@ -4745,7 +6211,10 @@ async function startMigration() {
     renderResultsCharts(res);
     renderResultRows('all');
   } catch(e) {
-    document.getElementById('migrationMsg').textContent = `Error: ${e.message}`;
+    const msg = e.message || String(e);
+    document.getElementById('migrationMsg').textContent = `Error: ${msg}`;
+    appendMigrationLogLine(msg, false);
+    document.getElementById('migrationStepLog').classList.remove('hidden');
   }
 }
 

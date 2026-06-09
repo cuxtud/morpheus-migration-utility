@@ -110,9 +110,16 @@ func (r *PostgresRepository) Upsert(p Profile) (Profile, error) {
 		if strings.TrimSpace(p.Password) == "" {
 			p.Password = existing.Password
 		}
-		if strings.TrimSpace(p.Token) == "" {
+		if strings.TrimSpace(p.Token) == "" && p.Username == "" {
 			p.Token = existing.Token
 		}
+	}
+	// Password-auth profile must not keep a stale API token (Client prefers token over password).
+	if p.Token != "" {
+		p.Password = ""
+		p.Username = ""
+	} else if p.Username != "" && p.Password != "" {
+		p.Token = ""
 	}
 	raw, err := profileToJSON(p)
 	if err != nil {

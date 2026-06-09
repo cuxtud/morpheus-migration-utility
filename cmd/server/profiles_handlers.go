@@ -27,7 +27,8 @@ type profileActionReq struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	Token     string `json:"token"`
-	SkipTLS   bool   `json:"skipTls"`
+	// Pointer so fleet discover (profileId only) does not clobber stored skipTls with false.
+	SkipTLS *bool `json:"skipTls"`
 }
 
 type profileDiscoverAllResp struct {
@@ -50,14 +51,37 @@ func resolveProfile(req profileActionReq) (*profiles.Profile, error) {
 		if err != nil {
 			return nil, err
 		}
-		return p, nil
+		out := *p
+		if strings.TrimSpace(req.URL) != "" {
+			out.URL = strings.TrimSpace(req.URL)
+		}
+		if req.SkipTLS != nil {
+			out.SkipTLS = *req.SkipTLS
+		}
+		if strings.TrimSpace(req.Token) != "" {
+			out.Token = strings.TrimSpace(req.Token)
+			out.Username = ""
+			out.Password = ""
+			return &out, nil
+		}
+		if strings.TrimSpace(req.Username) != "" && req.Password != "" {
+			out.Username = strings.TrimSpace(req.Username)
+			out.Password = req.Password
+			out.Token = ""
+			return &out, nil
+		}
+		return &out, nil
+	}
+	skipTLS := false
+	if req.SkipTLS != nil {
+		skipTLS = *req.SkipTLS
 	}
 	return &profiles.Profile{
 		URL:      strings.TrimSpace(req.URL),
 		Username: strings.TrimSpace(req.Username),
 		Password: req.Password,
 		Token:    strings.TrimSpace(req.Token),
-		SkipTLS:  req.SkipTLS,
+		SkipTLS:  skipTLS,
 	}, nil
 }
 
@@ -117,6 +141,13 @@ func handleSaveProfile(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 		Token:    strings.TrimSpace(req.Token),
 		SkipTLS:  req.SkipTLS,
+	}
+	// Switching auth mode: do not keep a stale token when saving password auth (or vice versa).
+	if p.Token != "" {
+		p.Password = ""
+		p.Username = ""
+	} else if p.Username != "" && (p.Password != "" || hadPassword) {
+		p.Token = ""
 	}
 	if err := p.ValidateSave(isNew, hadPassword, hadToken); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -299,27 +330,34 @@ func enrichMigrateApplInfo(a *migrate.ApplInfo) error {
 		return err
 	}
 	a.URL = p.URL
+	a.SkipTLS = p.SkipTLS
+	// Form overrides win when the user re-enters credentials on the migration screen.
+	if strings.TrimSpace(a.Token) != "" {
+		a.Username = ""
+		a.Password = ""
+		return nil
+	}
+	if strings.TrimSpace(a.Username) != "" && a.Password != "" {
+		a.Token = ""
+		return nil
+	}
 	a.Token = p.Token
 	a.Username = p.Username
 	a.Password = p.Password
-	a.SkipTLS = p.SkipTLS
 	return nil
 }
 
 func resolveConnClient(req connReq) (*morpheus.Client, error) {
-	if strings.TrimSpace(req.ProfileID) != "" {
-		p, err := profileRepo.Find(req.ProfileID)
-		if err != nil {
-			return nil, err
-		}
-		return p.Client()
-	}
-	p := profiles.Profile{
-		URL:      req.URL,
-		Token:    req.Token,
-		Username: req.Username,
-		Password: req.Password,
-		SkipTLS:  req.SkipTLS,
+	p, err := resolveProfile(profileActionReq{
+		ProfileID: req.ProfileID,
+		URL:       req.URL,
+		Username:  req.Username,
+		Password:  req.Password,
+		Token:     req.Token,
+		SkipTLS:   req.SkipTLS,
+	})
+	if err != nil {
+		return nil, err
 	}
 	return p.Client()
 }

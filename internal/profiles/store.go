@@ -123,8 +123,14 @@ func (s *Store) Upsert(p Profile) Profile {
 			if strings.TrimSpace(p.Password) == "" {
 				p.Password = s.Profiles[i].Password
 			}
-			if strings.TrimSpace(p.Token) == "" {
+			if strings.TrimSpace(p.Token) == "" && p.Username == "" {
 				p.Token = s.Profiles[i].Token
+			}
+			if p.Token != "" {
+				p.Password = ""
+				p.Username = ""
+			} else if p.Username != "" && p.Password != "" {
+				p.Token = ""
 			}
 			s.Profiles[i] = p
 			return p

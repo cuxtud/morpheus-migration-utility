@@ -170,6 +170,26 @@ func TestStripEmptyStringsFromOptionConfig_dropsEmptyStrings(t *testing.T) {
 	}
 }
 
+func TestIsFormLibraryInputRef(t *testing.T) {
+	inline := map[string]interface{}{"formField": true, "name": "a843f7a3-d8cf-45b3-bd76-75c83163aaba"}
+	if isFormLibraryInputRef(inline) {
+		t.Fatal("inline form field should not be library ref")
+	}
+	lib := map[string]interface{}{"formField": false, "name": "Postgres Version", "code": "pgsqlVersion"}
+	if !isFormLibraryInputRef(lib) {
+		t.Fatal("field group library input expected")
+	}
+}
+
+func TestIsFormLibraryInputIDRef(t *testing.T) {
+	if !isFormLibraryInputIDRef(map[string]interface{}{"id": 2589}) {
+		t.Fatal("id-only ref expected")
+	}
+	if isFormLibraryInputIDRef(map[string]interface{}{"id": 1, "type": "text"}) {
+		t.Fatal("full inline option is not id-only ref")
+	}
+}
+
 func TestIsLikelyUUID(t *testing.T) {
 	if !isLikelyUUID("224b000b-8fe1-48aa-b097-18b5d48489cd") {
 		t.Fatal("expected uuid")

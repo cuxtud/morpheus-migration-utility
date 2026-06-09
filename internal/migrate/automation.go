@@ -13,10 +13,11 @@ import (
 
 // automationState tracks destination IDs discovered during a migration run.
 type automationState struct {
-	destTaskNameToID      map[string]int64
-	destWorkflowKeyToID   map[string]int64 // name + "\x00" + type
-	destOptionCodeToID map[string]int64
+	destTaskNameToID    map[string]int64
+	destWorkflowKeyToID map[string]int64 // name + "\x00" + type
+	destOptionCodeToID  map[string]int64
 	optionTypesLoadErr string
+	progress           ProgressFunc
 }
 
 func newAutomationState() *automationState {
@@ -38,6 +39,12 @@ func sortItemsForMigration(items []SelectedItem) []SelectedItem {
 
 func itemTypeOrder(t string) int {
 	switch t {
+	case "credential":
+		return -3
+	case "group":
+		return -2
+	case "cloud":
+		return -1
 	case "nodeType":
 		return 0
 	case "task":
@@ -48,6 +55,8 @@ func itemTypeOrder(t string) int {
 		return 3
 	case "instanceType":
 		return 4
+	case "catalogItem":
+		return 8
 	case "optionList":
 		return 5
 	case "input":
@@ -350,8 +359,10 @@ func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, st
 		code = strings.TrimSpace(name)
 	}
 
+	state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", name))
 	state.reloadDestOptionTypes(dst)
 	if existingID := state.destOptionCodeToID[code]; existingID > 0 {
+		state.reportStep(fmt.Sprintf("Input %q found on destination — updating", name))
 		payload, err := buildOptionTypePayload(src, dst, obj, code)
 		if err != nil {
 			return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare input payload: %v", err)}
@@ -364,6 +375,7 @@ func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, st
 		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "updated", Message: "Updated input on destination"}
 	}
 
+	state.reportStep(fmt.Sprintf("Creating input %q on destination", name))
 	_, err := createOptionTypeOnDestination(src, dst, obj, code)
 	if err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("create input: %v", err)}
@@ -402,6 +414,11 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	if n := strings.TrimSpace(stringFromAny(obj["name"])); n != "" {
 		name = n
 	}
+
+	if err := ensureFormFieldGroupLibraryInputs(src, dst, state, obj); err != nil {
+		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form inputs: %v", err)}
+	}
+
 	formCode := strings.TrimSpace(stringFromAny(obj["code"]))
 	if formCode == "" {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: "form has empty code — cannot migrate"}
@@ -448,6 +465,236 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		}
 	}
 	return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created form on destination"}
+}
+
+func fetchFullOptionTypeForm(src *morpheus.Client, id int64) (map[string]interface{}, error) {
+	if src == nil || id <= 0 {
+		return nil, fmt.Errorf("invalid form id")
+	}
+	body, err := src.GetRaw(fmt.Sprintf("/api/library/option-type-forms/%d", id))
+	if err != nil {
+		return nil, fmt.Errorf("fetch form from source: %v", err)
+	}
+	var wrap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, err
+	}
+	raw, ok := wrap["optionTypeForm"]
+	if !ok {
+		return nil, fmt.Errorf("source response missing optionTypeForm")
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func fetchFullOptionType(src *morpheus.Client, id int64) (map[string]interface{}, error) {
+	if src == nil || id <= 0 {
+		return nil, fmt.Errorf("invalid input id")
+	}
+	body, err := src.GetRaw(fmt.Sprintf("/api/library/option-types/%d", id))
+	if err != nil {
+		return nil, fmt.Errorf("fetch input from source: %v", err)
+	}
+	var wrap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, err
+	}
+	raw, ok := wrap["optionType"]
+	if !ok {
+		return nil, fmt.Errorf("source response missing optionType")
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// isFormLibraryInputRef reports field-group options that reference library inputs (not inline form fields).
+func isFormLibraryInputRef(opt map[string]interface{}) bool {
+	if ff, ok := opt["formField"].(bool); ok {
+		return !ff
+	}
+	name := strings.TrimSpace(stringFromAny(opt["name"]))
+	if name == "" {
+		return false
+	}
+	return !isLikelyUUID(name)
+}
+
+// isFormLibraryInputIDRef reports a resolved field-group option that should be sent as {"id": N} only.
+func isFormLibraryInputIDRef(opt map[string]interface{}) bool {
+	if intFromAny(opt["id"]) <= 0 {
+		return false
+	}
+	return strings.TrimSpace(stringFromAny(opt["type"])) == "" &&
+		strings.TrimSpace(stringFromAny(opt["fieldName"])) == "" &&
+		strings.TrimSpace(stringFromAny(opt["code"])) == ""
+}
+
+func ensureFormFieldGroupLibraryInputs(src, dst *morpheus.Client, state *automationState, form map[string]interface{}) error {
+	fgs, ok := form["fieldGroups"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, g := range fgs {
+		gm, ok := g.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		opts, ok := gm["options"].([]interface{})
+		if !ok {
+			continue
+		}
+		newOpts := make([]interface{}, 0, len(opts))
+		for _, e := range opts {
+			om, ok := e.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if isFormLibraryInputIDRef(om) {
+				newOpts = append(newOpts, om)
+				continue
+			}
+			if !isFormLibraryInputRef(om) {
+				newOpts = append(newOpts, om)
+				continue
+			}
+			destID, err := ensureLibraryInputOnDestination(src, dst, state, om)
+			if err != nil {
+				return err
+			}
+			if destID > 0 {
+				newOpts = append(newOpts, map[string]interface{}{"id": destID})
+			}
+		}
+		gm["options"] = newOpts
+	}
+	return nil
+}
+
+func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (int64, error) {
+	code := strings.TrimSpace(stringFromAny(ref["code"]))
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(ref["fieldName"]))
+	}
+
+	state.reloadDestOptionTypes(dst)
+	if code != "" {
+		if id := state.destOptionCodeToID[code]; id > 0 {
+			return id, nil
+		}
+	}
+
+	inputObj := ref
+	srcID := intFromAny(ref["id"])
+	if srcID > 0 && src != nil {
+		fresh, err := fetchFullOptionType(src, srcID)
+		if err != nil {
+			return 0, err
+		}
+		inputObj = fresh
+	}
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(inputObj["code"]))
+	}
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(inputObj["fieldName"]))
+	}
+	if code == "" {
+		return 0, fmt.Errorf("library input missing code")
+	}
+
+	if id := state.destOptionCodeToID[code]; id > 0 {
+		return id, nil
+	}
+
+	label := strings.TrimSpace(stringFromAny(inputObj["name"]))
+	if label == "" {
+		label = code
+	}
+	state.reportStep(fmt.Sprintf("Creating input %q for form", label))
+	id, err := createOptionTypeOnDestination(src, dst, inputObj, code)
+	if err != nil {
+		return 0, err
+	}
+	state.destOptionCodeToID[code] = id
+	return id, nil
+}
+
+func ensureFormFromRef(src, dst *morpheus.Client, ref map[string]interface{}, state *automationState) (int64, *ItemResult) {
+	formName := strings.TrimSpace(stringFromAny(ref["name"]))
+	formCode := strings.TrimSpace(stringFromAny(ref["code"]))
+	srcFormID := intFromAny(ref["id"])
+
+	if formCode != "" {
+		if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
+			return destID, nil
+		}
+	}
+
+	if src != nil && srcFormID > 0 {
+		if formObj, err := fetchFullOptionTypeForm(src, srcFormID); err == nil && formObj != nil {
+			if formCode == "" {
+				formCode = strings.TrimSpace(stringFromAny(formObj["code"]))
+			}
+			if formName == "" {
+				formName = strings.TrimSpace(stringFromAny(formObj["name"]))
+			}
+			if formCode != "" {
+				if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
+					return destID, nil
+				}
+			}
+		}
+	}
+
+	if src == nil || srcFormID <= 0 {
+		label := formName
+		if label == "" {
+			label = formCode
+		}
+		if label == "" && srcFormID > 0 {
+			label = fmt.Sprintf("#%d", srcFormID)
+		}
+		return 0, &ItemResult{
+			Status:  "blocked",
+			Message: fmt.Sprintf("form %q is not on destination and could not be loaded from source", label),
+		}
+	}
+
+	if formName == "" {
+		formName = formCode
+	}
+	state.reportStep(fmt.Sprintf("Creating form %q on destination", formName))
+	res := migrateFormWithAutomation(src, dst, SelectedItem{
+		Category: "Forms",
+		Type:     "form",
+		ID:       srcFormID,
+		Name:     formName,
+		RawJSON:  "{}",
+	}, state)
+	if res.Status != "success" && res.Status != "skipped" {
+		return 0, &res
+	}
+
+	if formCode == "" {
+		if formObj, err := fetchFullOptionTypeForm(src, srcFormID); err == nil {
+			formCode = strings.TrimSpace(stringFromAny(formObj["code"]))
+		}
+	}
+	if formCode != "" {
+		if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
+			return destID, nil
+		}
+	}
+	return 0, &ItemResult{
+		Status:  "blocked",
+		Message: fmt.Sprintf("form %q migrated but not found on destination", formName),
+	}
 }
 
 func walkFormOptions(form map[string]interface{}, fn func(groupCode string, opt map[string]interface{})) {
@@ -926,6 +1173,9 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 
 	var metas []formOptMeta
 	walkFormOptions(clone, func(gc string, opt map[string]interface{}) {
+		if gc != "" && isFormLibraryInputIDRef(opt) {
+			return
+		}
 		metas = append(metas, formOptMeta{
 			opt:          opt,
 			groupCode:    gc,

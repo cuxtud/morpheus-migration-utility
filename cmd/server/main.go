@@ -70,6 +70,8 @@ func main() {
 	mux.HandleFunc("/api/discover", handleDiscover)
 	mux.HandleFunc("/api/discoveries", handleMigrationDiscoveries)
 	mux.HandleFunc("/api/migrate", handleMigrate)
+	mux.HandleFunc("/api/instance-type-details", handleInstanceTypeDetails)
+	mux.HandleFunc("/api/node-type-details", handleNodeTypeDetails)
 	mux.HandleFunc("/api/profiles", handleListProfiles)
 	mux.HandleFunc("/api/profiles/save", handleSaveProfile)
 	mux.HandleFunc("/api/profiles/delete", handleDeleteProfile)
@@ -105,12 +107,15 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      loggingMiddleware(corsMiddleware(mux)),
-		TLSConfig:    tlsCfg,
-		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 5 * time.Minute,
-		IdleTimeout:  2 * time.Minute,
+		Addr:      ":" + port,
+		Handler:   loggingMiddleware(corsMiddleware(mux)),
+		TLSConfig: tlsCfg,
+		// ReadTimeout covers uploading the migration request body.
+		ReadTimeout: 5 * time.Minute,
+		// Migrations stream progress for a long time (instance types, catalog, inputs).
+		// A short WriteTimeout caused "client disconnected" / browser "network error" ~5 min in.
+		WriteTimeout: 2 * time.Hour,
+		IdleTimeout:  5 * time.Minute,
 	}
 
 	log.Printf("🚀 Morpheus Snapshot v%s starting on https://localhost:%s", version, port)
@@ -132,7 +137,7 @@ type connReq struct {
 	Token     string `json:"token"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
-	SkipTLS   bool   `json:"skipTls"`
+	SkipTLS   *bool  `json:"skipTls"`
 }
 
 func handleTestConnection(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +186,9 @@ func handleDiscover(w http.ResponseWriter, r *http.Request) {
 			Token:     req.Token,
 			Username:  req.Username,
 			Password:  req.Password,
-			SkipTLS:   req.SkipTLS,
+		}
+		if req.SkipTLS != nil {
+			src.SkipTLS = *req.SkipTLS
 		}
 		if strings.TrimSpace(req.ProfileID) != "" {
 			if p, err := profileRepo.Find(req.ProfileID); err == nil {
@@ -189,7 +196,9 @@ func handleDiscover(w http.ResponseWriter, r *http.Request) {
 				src.Token = p.Token
 				src.Username = p.Username
 				src.Password = p.Password
-				src.SkipTLS = p.SkipTLS
+				if req.SkipTLS == nil {
+					src.SkipTLS = p.SkipTLS
+				}
 			}
 		}
 		discoveryID, _ := profileRepo.SaveMigrationDiscovery(&profiles.MigrationDiscoveryRecord{
@@ -223,8 +232,69 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "destination: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if r.URL.Query().Get("stream") == "1" {
+		handleMigrateStream(w, r, &req)
+		return
+	}
 	started := time.Now().UTC()
 	result := migrate.Run(req)
+	persistMigrationRun(&req, result, started)
+	jsonOK(w, result)
+}
+
+func handleMigrateStream(w http.ResponseWriter, r *http.Request, req *migrate.MigrateRequest) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, canFlush := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	clientGone := false
+	write := func(v any) bool {
+		if clientGone {
+			return false
+		}
+		if err := enc.Encode(v); err != nil {
+			clientGone = true
+			log.Printf("migrate stream: browser disconnected before migration finished (%v) — migration continues server-side; check destination or server logs", err)
+			return false
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return true
+	}
+
+	// Keep the HTTP connection alive while Morpheus API calls run (can take many minutes).
+	heartbeatDone := make(chan struct{})
+	defer close(heartbeatDone)
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				if !write(map[string]any{"type": "heartbeat", "ts": time.Now().UTC().Format(time.RFC3339)}) {
+					return
+				}
+			}
+		}
+	}()
+
+	started := time.Now().UTC()
+	result := migrate.RunWithProgress(*req, func(ev migrate.ProgressEvent) {
+		write(map[string]any{"type": "progress", "event": ev})
+	})
+	persistMigrationRun(req, result, started)
+	write(map[string]any{"type": "result", "result": result})
+}
+
+func persistMigrationRun(req *migrate.MigrateRequest, result *migrate.MigrateResult, started time.Time) {
 	if profileRepo.SupportsJSONB() && result != nil {
 		sourceTime := strings.TrimSpace(req.DiscoveryTime)
 		if req.DiscoveryID > 0 {
@@ -235,7 +305,7 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 		result.SourceDiscoveryID = req.DiscoveryID
 		result.SourceDiscoveryTime = sourceTime
 		_, _ = profileRepo.SaveMigrationRun(&profiles.MigrationRunRecord{
-			Request:             req,
+			Request:             *req,
 			Result:              *result,
 			StartedAt:           started.Format(time.RFC3339),
 			FinishedAt:          time.Now().UTC().Format(time.RFC3339),
@@ -243,7 +313,78 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 			SourceDiscoveryTime: result.SourceDiscoveryTime,
 		}, req.DiscoveryID)
 	}
-	jsonOK(w, result)
+}
+
+func handleInstanceTypeDetails(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Source migrate.ApplInfo `json:"source"`
+		IDs    []int64          `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := enrichMigrateApplInfo(&req.Source); err != nil {
+		jsonError(w, "source: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	src, err := migrate.ClientFromApplInfo(req.Source)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	out := map[string]map[string]interface{}{}
+	for _, id := range req.IDs {
+		if id <= 0 {
+			continue
+		}
+		obj, err := migrate.FetchFullInstanceType(src, id)
+		if err != nil {
+			continue
+		}
+		out[fmt.Sprintf("%d", id)] = obj
+	}
+	jsonOK(w, map[string]interface{}{"instanceTypes": out})
+}
+
+func handleNodeTypeDetails(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Source migrate.ApplInfo `json:"source"`
+		IDs    []int64          `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := enrichMigrateApplInfo(&req.Source); err != nil {
+		jsonError(w, "source: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	src, err := migrate.ClientFromApplInfo(req.Source)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	out := map[string]map[string]interface{}{}
+	for _, id := range req.IDs {
+		if id <= 0 {
+			continue
+		}
+		obj, err := migrate.FetchFullNodeType(src, id)
+		if err != nil {
+			continue
+		}
+		out[fmt.Sprintf("%d", id)] = obj
+	}
+	jsonOK(w, map[string]interface{}{"nodeTypes": out})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
