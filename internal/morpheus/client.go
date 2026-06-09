@@ -370,9 +370,8 @@ func (c *Client) Discover() *DiscoveryResult {
 	}
 
 	fetchers := []fetcher{
-		// Infrastructure / Clouds
+		// Infrastructure / Clouds (Morpheus API uses /api/zones; /api/clouds is not on all versions)
 		{category: "Clouds", icon: "cloud", endpoint: "/api/zones", dataKey: "zones", typeHint: "cloud", subField: "zoneType"},
-		{category: "Clouds", icon: "cloud", endpoint: "/api/clouds", dataKey: "zones", typeHint: "cloud", subField: "zoneType"},
 
 		// Integrations
 		{category: "Integrations", icon: "plug", endpoint: "/api/integrations", dataKey: "integrations", typeHint: "integration", subField: "integrationType"},
@@ -381,6 +380,7 @@ func (c *Client) Discover() *DiscoveryResult {
 		{category: "Instance Types", icon: "template", endpoint: "/api/library/instance-types", dataKey: "instanceTypes", typeHint: "instanceType", parentPath: "Library"},
 		{category: "Layouts", icon: "template", endpoint: "/api/library/layouts", dataKey: "layouts", typeHint: "layout", parentPath: "Library"},
 		{category: "Node Types", icon: "template", endpoint: "/api/library/container-types", dataKey: "containerTypes", typeHint: "nodeType", parentPath: "Library"},
+		{category: "Virtual Images", icon: "template", endpoint: "/api/virtual-images", dataKey: "virtualImages", typeHint: "virtualImage", parentPath: "Library"},
 
 		// Catalog & Blueprints
 		{category: "Catalog Items", icon: "catalog", endpoint: "/api/catalog-item-types", dataKey: "catalogItemTypes", typeHint: "catalogItem"},
@@ -439,6 +439,45 @@ func (c *Client) Discover() *DiscoveryResult {
 					}
 				}
 			}
+			// List catalog items are shallow; fetch full record (config, optionTypes, instanceSpec).
+			if f.dataKey == "catalogItemTypes" && id > 0 {
+				if body, err := c.get(fmt.Sprintf("/api/catalog-item-types/%d", id)); err == nil {
+					var w map[string]json.RawMessage
+					if json.Unmarshal(body, &w) == nil {
+						if cit, ok := w["catalogItemType"]; ok {
+							itemRaw = cit
+						}
+					}
+				}
+			}
+			// List container types are shallow; fetch full record (virtualImage, etc.).
+			if f.dataKey == "containerTypes" && id > 0 {
+				if body, err := c.get(fmt.Sprintf("/api/library/container-types/%d", id)); err == nil {
+					var w map[string]json.RawMessage
+					if json.Unmarshal(body, &w) == nil {
+						if ct, ok := w["containerType"]; ok {
+							itemRaw = ct
+						}
+					}
+				}
+			}
+			// List instance types are shallow; fetch full record (layouts, inputs, node types).
+			if f.dataKey == "instanceTypes" && id > 0 {
+				for _, path := range []string{
+					fmt.Sprintf("/api/library/instance-types/%d", id),
+					fmt.Sprintf("/api/instance-types/%d", id),
+				} {
+					if body, err := c.get(path); err == nil {
+						var w map[string]json.RawMessage
+						if json.Unmarshal(body, &w) == nil {
+							if it, ok := w["instanceType"]; ok {
+								itemRaw = it
+								break
+							}
+						}
+					}
+				}
+			}
 			// List forms are shallow; fetch full option-type-form (options + fieldGroups + cross-field config refs).
 			if f.dataKey == "optionTypeForms" && id > 0 {
 				if body, err := c.get(fmt.Sprintf("/api/library/option-type-forms/%d", id)); err == nil {
@@ -450,10 +489,7 @@ func (c *Client) Discover() *DiscoveryResult {
 					}
 				}
 			}
-			name := extractStringField(itemRaw, "name")
-			if name == "" {
-				name = extractStringField(itemRaw, "username")
-			}
+			name := discoveryItemName(itemRaw, f.typeHint)
 			desc := extractStringField(itemRaw, "description")
 			subType := ""
 			if f.subField != "" {

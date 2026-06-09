@@ -30,14 +30,15 @@ func LoginWithPassword(baseURL, username, password string, skipTLS bool) (string
 		return "", fmt.Errorf("url, username, and password are required")
 	}
 
+	// Morpheus OAuth: client_id, grant_type, scope in query; username + password in body.
 	q := url.Values{}
+	q.Set("client_id", defaultOAuthClientID)
 	q.Set("grant_type", "password")
 	q.Set("scope", "write")
-	q.Set("client_id", defaultOAuthClientID)
-	q.Set("username", username)
-
 	tokenURL := baseURL + "/oauth/token?" + q.Encode()
+
 	body := url.Values{}
+	body.Set("username", username)
 	body.Set("password", password)
 
 	transport := &http.Transport{
@@ -49,6 +50,7 @@ func LoginWithPassword(baseURL, username, password string, skipTLS bool) (string
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := client.Do(req)
@@ -62,7 +64,11 @@ func LoginWithPassword(baseURL, username, password string, skipTLS bool) (string
 		return "", err
 	}
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("oauth login HTTP %d: %s", resp.StatusCode, string(raw))
+		msg := string(raw)
+		if strings.Contains(msg, "invalid_grant") || strings.Contains(msg, "Bad credentials") {
+			return "", fmt.Errorf("oauth login HTTP %d: %s (check username/password; sub-tenant users often need tenantId\\username; or use an API token instead)", resp.StatusCode, msg)
+		}
+		return "", fmt.Errorf("oauth login HTTP %d: %s", resp.StatusCode, msg)
 	}
 
 	var tr TokenResponse
