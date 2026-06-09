@@ -14,6 +14,7 @@
 ## Quick links
 
 - **[Download binaries](download.md)** — Linux, Windows, macOS (no runtime required)
+- **[Release notes](releases.md)** — What changed in each version (latest: **v1.0.3**)
 - **[Installation](installation.md)** — VM install, HTTPS, systemd
 - **[Usage guide](usage.md)** — Profiles, fleet, 5-step migration
 - **[PostgreSQL](postgres.md)** — Persistent storage setup

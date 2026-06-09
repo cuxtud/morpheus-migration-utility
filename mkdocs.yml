@@ -30,6 +30,7 @@ theme:
 nav:
   - Home: index.md
   - Download: download.md
+  - Release notes: releases.md
   - Installation: installation.md
   - Usage: usage.md
   - PostgreSQL: postgres.md
