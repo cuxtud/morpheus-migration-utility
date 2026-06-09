@@ -20,11 +20,3 @@ sudo journalctl -u morpheus-snapshot -f
 # foreground — stderr includes HTTP debug when enabled in UI
 sudo /opt/morpheus-snapshot/morpheus-snapshot-linux-amd64
 ```
-
-## Documentation site 404
-
-After the first docs deploy, enable **GitHub Pages** for this repository:
-
-**Settings → Pages → Build and deployment → Source: Deploy from branch → Branch: `gh-pages` / `/ (root)`**
-
-Site URL: **https://cuxtud.github.io/morpheus-migration-utility/**
