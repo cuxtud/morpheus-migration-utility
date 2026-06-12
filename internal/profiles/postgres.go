@@ -332,6 +332,7 @@ func (r *PostgresRepository) ListMigrationDiscoveries(limit int) ([]MigrationDis
 		if rec.Discovery != nil {
 			item.TotalItems = rec.Discovery.Total
 			item.Categories = len(rec.Discovery.Categories)
+			item.DurationMs = rec.Discovery.DurationMs
 		}
 		out = append(out, item)
 	}

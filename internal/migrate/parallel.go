@@ -5,11 +5,51 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 const defaultCatalogParallelism = 4
+const defaultWaveParallelism = 4
+
+func migrationParallelWorkers(req MigrateRequest) int {
+	n := req.ParallelWorkers
+	if n == 1 {
+		return 1
+	}
+	if n <= 0 {
+		n = defaultWaveParallelism
+	}
+	if n > defaultWaveParallelism {
+		n = defaultWaveParallelism
+	}
+	return n
+}
+
+// groupMigrationWaves splits sorted items into waves that share the same dependency tier.
+func groupMigrationWaves(items []SelectedItem) [][]SelectedItem {
+	sorted := sortItemsForMigration(items)
+	if len(sorted) == 0 {
+		return nil
+	}
+	var waves [][]SelectedItem
+	current := []SelectedItem{sorted[0]}
+	lastOrder := itemTypeOrder(sorted[0].Type)
+	for _, it := range sorted[1:] {
+		order := itemTypeOrder(it.Type)
+		if order != lastOrder {
+			waves = append(waves, current)
+			current = nil
+			lastOrder = order
+		}
+		current = append(current, it)
+	}
+	if len(current) > 0 {
+		waves = append(waves, current)
+	}
+	return waves
+}
 
 // catalogParallelWorkers returns worker count for catalog item migration (0 = auto).
 func catalogParallelWorkers(req MigrateRequest, catalogCount int) int {
@@ -61,6 +101,8 @@ func migrateOneItem(ctx migrateItemContext) ItemResult {
 		return migrateInputWithAutomation(src, dst, item, state)
 	case "form":
 		return migrateFormWithAutomation(src, dst, item, state)
+	case "optionList":
+		return migrateOptionListWithAutomation(src, dst, item)
 	case "cypher":
 		return migrateCypher(src, dst, item)
 	case "instanceType":
@@ -73,6 +115,8 @@ func migrateOneItem(ctx migrateItemContext) ItemResult {
 		return migrateCloudWithCredential(src, dst, item)
 	case "catalogItem":
 		return migrateCatalogItem(src, dst, item, state)
+	case "integration":
+		return skipNonMigratableItem(item)
 	default:
 		return migrateGenericEndpoint(dst, item, state, ctx.label)
 	}
@@ -168,11 +212,12 @@ func (r *migrationRecorder) record(idx, total int, label string, itemResult Item
 		doneMsg = itemResult.Status
 	}
 	r.emitSafe(ProgressEvent{
-		Phase:   "item_done",
-		Index:   idx,
-		Total:   total,
-		Message: fmt.Sprintf("%s — %s", label, doneMsg),
-		Status:  itemResult.Status,
+		Phase:      "item_done",
+		Index:      idx,
+		Total:      total,
+		Message:    fmt.Sprintf("%s — %s", label, doneMsg),
+		Status:     itemResult.Status,
+		DurationMs: itemResult.DurationMs,
 	})
 }
 
@@ -184,20 +229,46 @@ func (r *migrationRecorder) runItem(src, dst *morpheus.Client, state *automation
 		Total:   total,
 		Message: fmt.Sprintf("Migrating %s…", label),
 	})
+	itemStart := time.Now()
 	itemResult := migrateOneItem(migrateItemContext{src: src, dst: dst, state: state, item: item, label: label})
+	itemResult.DurationMs = time.Since(itemStart).Milliseconds()
 	r.record(idx, total, label, itemResult)
 }
 
-func (r *migrationRecorder) runCatalogItemsParallel(src, dst *morpheus.Client, catalogs []SelectedItem, workers, total int, baseIndex int) {
+func (r *migrationRecorder) runWave(src, dst *morpheus.Client, state *automationState, wave []SelectedItem, workers, total, baseIndex int) int {
+	if len(wave) == 0 {
+		return baseIndex
+	}
+	if len(wave) == 1 || workers <= 1 {
+		idx := baseIndex
+		for _, item := range wave {
+			idx++
+			r.runItem(src, dst, state, item, idx, total)
+		}
+		return idx
+	}
+	r.doneCount.Store(0)
+	r.runItemsParallel(src, dst, state, wave, workers, total, baseIndex, "wave")
+	return baseIndex + len(wave)
+}
+
+func (r *migrationRecorder) runItemsParallel(src, dst *morpheus.Client, state *automationState, items []SelectedItem, workers, total, baseIndex int, kind string) {
+	if len(items) == 0 {
+		return
+	}
+	msg := fmt.Sprintf("Migrating %d items in parallel (%d workers)…", len(items), workers)
+	if kind == "parallel" {
+		msg = fmt.Sprintf("Migrating %d catalog items in parallel (%d workers)…", len(items), workers)
+	}
 	r.emitSafe(ProgressEvent{
 		Phase:   "step",
-		Message: fmt.Sprintf("Migrating %d catalog items in parallel (%d workers)…", len(catalogs), workers),
+		Message: msg,
 		Total:   total,
 	})
 
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
-	for _, item := range catalogs {
+	for _, item := range items {
 		item := item
 		wg.Add(1)
 		go func() {
@@ -206,23 +277,21 @@ func (r *migrationRecorder) runCatalogItemsParallel(src, dst *morpheus.Client, c
 			defer func() { <-sem }()
 
 			label := itemQueueLabel(item)
+			parallelLabel := "parallel"
+			if kind == "wave" {
+				parallelLabel = "wave"
+			}
 			r.emitSafe(ProgressEvent{
 				Phase:   "step",
 				Total:   total,
-				Message: fmt.Sprintf("Migrating %s (parallel)…", label),
+				Message: fmt.Sprintf("Migrating %s (%s)…", label, parallelLabel),
 			})
 
-			workerState := newAutomationState()
-			workerState.progress = func(ev ProgressEvent) {
-				if ev.Message != "" {
-					ev.Message = label + ": " + ev.Message
-				}
-				r.emitSafe(ev)
-			}
-
+			itemStart := time.Now()
 			itemResult := migrateOneItem(migrateItemContext{
-				src: src, dst: dst, state: workerState, item: item, label: label,
+				src: src, dst: dst, state: state, item: item, label: label,
 			})
+			itemResult.DurationMs = time.Since(itemStart).Milliseconds()
 
 			n := int(r.doneCount.Add(1)) + baseIndex
 			r.record(n, total, label, itemResult)

@@ -17,7 +17,11 @@ func migrateCatalogItem(src, dst *morpheus.Client, item SelectedItem, state *aut
 		}
 	}
 
-	obj, err := fetchFullCatalogItem(src, item.ID)
+	var snap *SourceSnapshot
+	if state != nil {
+		snap = state.sourceSnap
+	}
+	obj, err := snapCatalogObject(snap, src, item)
 	if err != nil {
 		return ItemResult{Name: name, Type: "catalogItem", Status: "error", Message: err.Error()}
 	}
@@ -34,7 +38,7 @@ func migrateCatalogItem(src, dst *morpheus.Client, item SelectedItem, state *aut
 		catType = "instance"
 	}
 
-	optIDs, _, dep := ensureOptionTypeIDs(src, dst, obj["optionTypes"], state, name)
+	optIDs, dep := resolveCatalogOptionTypeRefs(dst, obj["optionTypes"], state)
 	if dep != nil {
 		dep.Type = "catalogItem"
 		if dep.Name == "" {
@@ -45,7 +49,7 @@ func migrateCatalogItem(src, dst *morpheus.Client, item SelectedItem, state *aut
 
 	if catType == "workflow" {
 		if wf, ok := obj["workflow"].(map[string]interface{}); ok && wf != nil {
-			wfID, blocked := ensureWorkflowFromRef(src, dst, wf, state)
+			wfID, blocked := resolveCatalogWorkflowRef(src, dst, wf, state)
 			if blocked != nil {
 				blocked.Type = "catalogItem"
 				if blocked.Name == "" {
@@ -74,10 +78,10 @@ func migrateCatalogItem(src, dst *morpheus.Client, item SelectedItem, state *aut
 	}
 	if cfg, ok := obj["config"].(map[string]interface{}); ok && cfg != nil && catType == "instance" {
 		instanceTypeCode := strings.TrimSpace(stringFromAny(cfg["type"]))
-		if err := requireDestInstanceType(dst, instanceTypeCode); err != nil {
+		if err := requireDestInstanceTypeCached(src, dst, state, instanceTypeCode); err != nil {
 			return ItemResult{Name: name, Type: "catalogItem", Status: "blocked", Message: err.Error()}
 		}
-		notes, err := remapCatalogInstanceConfig(src, dst, cfg)
+		notes, err := remapCatalogInstanceConfig(src, dst, state, cfg)
 		if err != nil {
 			status := "error"
 			if strings.Contains(strings.ToLower(err.Error()), "not found") ||
@@ -99,86 +103,461 @@ func migrateCatalogItem(src, dst *morpheus.Client, item SelectedItem, state *aut
 		return ItemResult{Name: name, Type: "catalogItem", Status: "error", Message: err.Error()}
 	}
 
-	destID, err := findDestCatalogItemIDByCode(dst, code)
+	destID, err := state.findDestCatalogID(dst, code, name)
 	if err != nil {
 		return ItemResult{Name: name, Type: "catalogItem", Status: "error", Message: err.Error()}
 	}
 
 	if destID > 0 {
-		_, err = dst.PutRaw(fmt.Sprintf("/api/catalog-item-types/%d", destID), payload)
-		if err != nil {
+		if err := putCatalogItemWithFormRetry(src, dst, state, obj, optIDs, destID, payload); err != nil {
 			return ItemResult{Name: name, Type: "catalogItem", Status: "error", Message: err.Error()}
 		}
 		return catalogItemResult(name, "updated", remapNotes)
 	}
 
-	_, err = dst.PostRaw("/api/catalog-item-types", payload)
-	if err != nil {
-		if isDuplicateErr(err) {
-			destID, findErr := findDestCatalogItemIDByCode(dst, code)
-			if findErr == nil && destID > 0 {
-				_, err = dst.PutRaw(fmt.Sprintf("/api/catalog-item-types/%d", destID), payload)
-				if err == nil {
-					return catalogItemResult(name, "updated", remapNotes)
-				}
-			}
-		}
+	if err := postCatalogItemWithFormRetry(src, dst, state, obj, optIDs, code, name, payload); err != nil {
 		return ItemResult{Name: name, Type: "catalogItem", Status: "error", Message: err.Error()}
 	}
 	return catalogItemResult(name, "created", remapNotes)
 }
 
+func resolveCatalogWorkflowRef(src, dst *morpheus.Client, ref map[string]interface{}, state *automationState) (int64, *ItemResult) {
+	return ensureWorkflowFromRef(src, dst, ref, state)
+}
+
+func resolveCatalogOptionTypeRefs(dst *morpheus.Client, opt interface{}, state *automationState) ([]interface{}, *ItemResult) {
+	arr, ok := opt.([]interface{})
+	if !ok || len(arr) == 0 {
+		return nil, nil
+	}
+	state.reloadDestOptionTypes(dst)
+	out := make([]interface{}, 0, len(arr))
+	for _, e := range arr {
+		om, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		code := strings.TrimSpace(stringFromAny(om["code"]))
+		if code == "" {
+			code = strings.TrimSpace(stringFromAny(om["fieldName"]))
+		}
+		if code == "" {
+			code = strings.TrimSpace(stringFromAny(om["name"]))
+		}
+		if id := state.destOptionTypeID(code); id > 0 {
+			out = append(out, map[string]interface{}{"id": id})
+			continue
+		}
+		if inline := stripCatalogInlineOptionType(om); inline != nil {
+			out = append(out, inline)
+		}
+	}
+	return out, nil
+}
+
+func stripCatalogInlineOptionType(opt map[string]interface{}) map[string]interface{} {
+	raw, err := json.Marshal(opt)
+	if err != nil {
+		return nil
+	}
+	var clone map[string]interface{}
+	if json.Unmarshal(raw, &clone) != nil {
+		return nil
+	}
+	for _, k := range []string{
+		"id", "dateCreated", "lastUpdated", "account", "accountId", "uuid", "owner", "stats",
+	} {
+		delete(clone, k)
+	}
+	if len(clone) == 0 {
+		return nil
+	}
+	return clone
+}
+
+func postCatalogItemWithFormRetry(src, dst *morpheus.Client, state *automationState, obj map[string]interface{}, optIDs []interface{}, code, name string, payload []byte) error {
+	_, err := dst.PostRaw("/api/catalog-item-types", payload)
+	if err == nil {
+		return nil
+	}
+	if isCatalogFormPayloadErr(err) {
+		if retry, ok := rebuildCatalogItemPayloadAfterFormErr(src, dst, state, obj, optIDs); ok {
+			if _, retryErr := dst.PostRaw("/api/catalog-item-types", retry); retryErr == nil {
+				return nil
+			} else if !isCatalogFormPayloadErr(retryErr) {
+				return retryErr
+			}
+		}
+	}
+	if isDuplicateErr(err) {
+		destID, findErr := state.findDestCatalogID(dst, code, name)
+		if findErr == nil && destID > 0 {
+			return putCatalogItemWithFormRetry(src, dst, state, obj, optIDs, destID, payload)
+		}
+	}
+	return err
+}
+
+func putCatalogItemWithFormRetry(src, dst *morpheus.Client, state *automationState, obj map[string]interface{}, optIDs []interface{}, destID int64, payload []byte) error {
+	_, err := dst.PutRaw(fmt.Sprintf("/api/catalog-item-types/%d", destID), payload)
+	if err == nil {
+		return nil
+	}
+	if isCatalogFormPayloadErr(err) {
+		if retry, ok := rebuildCatalogItemPayloadAfterFormErr(src, dst, state, obj, optIDs); ok {
+			if _, retryErr := dst.PutRaw(fmt.Sprintf("/api/catalog-item-types/%d", destID), retry); retryErr == nil {
+				return nil
+			}
+		}
+	}
+	return err
+}
+
+func isCatalogFormPayloadErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "the form contains") ||
+		(strings.Contains(s, "must be unique") && strings.Contains(s, "form"))
+}
+
+func rebuildCatalogItemPayloadAfterFormErr(src, dst *morpheus.Client, state *automationState, obj map[string]interface{}, optIDs []interface{}) ([]byte, bool) {
+	if state == nil {
+		state = newAutomationState(nil)
+	}
+	_, blocked := ensureCatalogFormRefs(src, dst, obj, state, "")
+	if blocked != nil {
+		return nil, false
+	}
+	finalizeCatalogFormWriteFields(obj)
+	payload, err := buildCatalogItemWritePayload(obj, optIDs)
+	if err != nil {
+		return nil, false
+	}
+	return payload, true
+}
+
 func ensureCatalogFormRefs(src, dst *morpheus.Client, obj map[string]interface{}, state *automationState, catalogName string) ([]string, *ItemResult) {
 	var notes []string
-	remap := func(field string, ref map[string]interface{}) *ItemResult {
-		formID, blocked := ensureFormFromRef(src, dst, ref, state)
+	resolved := map[string]int64{}
+
+	noted := map[int64]struct{}{}
+	resolve := func(ref map[string]interface{}) (int64, *ItemResult) {
+		key := catalogFormRefKey(ref)
+		if key == "" {
+			return 0, nil
+		}
+		if id, ok := resolved[key]; ok {
+			return id, nil
+		}
+		formID, formNote, blocked := resolveCatalogFormRef(src, dst, state, ref)
 		if blocked != nil {
 			if blocked.Name == "" {
 				blocked.Name = catalogName
 			}
-			return blocked
+			return 0, blocked
 		}
-		if formID > 0 {
-			obj[field] = map[string]interface{}{"id": formID}
-			if n := strings.TrimSpace(stringFromAny(ref["name"])); n != "" {
-				notes = append(notes, fmt.Sprintf("Form: created or mapped %q (#%d) on destination", n, formID))
-			} else {
-				notes = append(notes, fmt.Sprintf("Form: mapped to destination form #%d", formID))
+		resolved[key] = formID
+		if formNote != "" {
+			notes = append(notes, formNote)
+			if formID > 0 {
+				noted[formID] = struct{}{}
 			}
 		}
-		return nil
+		return formID, nil
+	}
+	assign := func(field string, ref map[string]interface{}, formID int64) {
+		if formID <= 0 {
+			delete(obj, field)
+			return
+		}
+		obj[field] = map[string]interface{}{"id": formID}
+		if _, ok := noted[formID]; ok {
+			return
+		}
+		noted[formID] = struct{}{}
+		if n := strings.TrimSpace(stringFromAny(ref["name"])); n != "" {
+			notes = append(notes, fmt.Sprintf("Form: linked catalog to existing form %q (#%d)", n, formID))
+		} else {
+			notes = append(notes, fmt.Sprintf("Form: linked catalog to destination form #%d", formID))
+		}
 	}
 
-	if f, ok := obj["form"].(map[string]interface{}); ok && f != nil {
-		if blocked := remap("form", f); blocked != nil {
+	for _, field := range []string{"form", "optionTypeForm"} {
+		ref, ok := obj[field].(map[string]interface{})
+		if !ok || ref == nil {
+			continue
+		}
+		formID, blocked := resolve(ref)
+		if blocked != nil {
 			return notes, blocked
 		}
+		assign(field, ref, formID)
 	}
-	if f, ok := obj["optionTypeForm"].(map[string]interface{}); ok && f != nil {
-		if blocked := remap("optionTypeForm", f); blocked != nil {
-			return notes, blocked
+
+	if fc, ok := obj["formConfig"].(map[string]interface{}); ok && fc != nil {
+		for _, field := range []string{"form", "optionTypeForm"} {
+			ref, ok := fc[field].(map[string]interface{})
+			if !ok || ref == nil {
+				continue
+			}
+			formID, blocked := resolve(ref)
+			if blocked != nil {
+				return notes, blocked
+			}
+			if formID > 0 {
+				fc[field] = map[string]interface{}{"id": formID}
+			} else {
+				delete(fc, field)
+			}
 		}
+		stripCatalogFormRefs(fc)
+		obj["formConfig"] = fc
 	}
+
 	if arr, ok := obj["optionTypeForms"].([]interface{}); ok {
-		for i, e := range arr {
+		out := make([]interface{}, 0, len(arr))
+		for _, e := range arr {
 			ref, ok := e.(map[string]interface{})
 			if !ok || ref == nil {
 				continue
 			}
-			formID, blocked := ensureFormFromRef(src, dst, ref, state)
+			formID, blocked := resolve(ref)
 			if blocked != nil {
-				if blocked.Name == "" {
-					blocked.Name = catalogName
-				}
 				return notes, blocked
 			}
 			if formID > 0 {
-				arr[i] = map[string]interface{}{"id": formID}
+				out = append(out, map[string]interface{}{"id": formID})
 			}
 		}
-		obj["optionTypeForms"] = arr
+		if len(out) > 0 {
+			obj["optionTypeForms"] = out
+		} else {
+			delete(obj, "optionTypeForms")
+		}
 	}
+
+	finalizeCatalogFormWriteFields(obj)
 	return notes, nil
+}
+
+func resolveCatalogFormRef(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (int64, string, *ItemResult) {
+	formCode, formName, destID := resolveDestinationFormID(src, dst, state, ref)
+	if destID > 0 {
+		return destID, "", nil
+	}
+	if src == nil {
+		return 0, "", catalogFormBlockedRef(ref, formCode, formName, "source appliance is required to migrate forms")
+	}
+
+	dep, err := selectedItemFromFormRef(src, state, ref)
+	if err != nil {
+		return 0, "", catalogFormBlockedRef(ref, formCode, formName, err.Error())
+	}
+	res := migrateFormWithAutomation(src, dst, dep, state)
+	if res.Status != "success" && res.Status != "skipped" {
+		if res.Name == "" {
+			res.Name = formName
+		}
+		return 0, "", &res
+	}
+
+	_ = state.refreshDestFormIndex(dst)
+	formCode, formName, destID = resolveDestinationFormID(src, dst, state, ref)
+	if destID <= 0 {
+		return 0, "", catalogFormBlockedRef(ref, formCode, formName, "form migration completed but destination form id could not be resolved")
+	}
+
+	label := formName
+	if label == "" {
+		label = formCode
+	}
+	if label == "" {
+		label = strings.TrimSpace(dep.Name)
+	}
+	note := fmt.Sprintf("Form: migrated form %q to destination (#%d)", label, destID)
+	if res.Status == "skipped" {
+		note = fmt.Sprintf("Form: linked catalog to existing form %q (#%d)", label, destID)
+	}
+	return destID, note, nil
+}
+
+func catalogFormBlockedRef(ref map[string]interface{}, formCode, formName, detail string) *ItemResult {
+	label := formName
+	if label == "" {
+		label = formCode
+	}
+	if label == "" {
+		if id := intFromAny(ref["id"]); id > 0 {
+			label = fmt.Sprintf("#%d", id)
+		}
+	}
+	if label == "" {
+		label = "unknown"
+	}
+	return &ItemResult{
+		Status:  "blocked",
+		Message: fmt.Sprintf("form %q: %s", label, detail),
+	}
+}
+
+func selectedItemFromFormRef(src *morpheus.Client, state *automationState, ref map[string]interface{}) (SelectedItem, error) {
+	srcID := intFromAny(ref["id"])
+	name := strings.TrimSpace(stringFromAny(ref["name"]))
+	code := strings.TrimSpace(stringFromAny(ref["code"]))
+
+	if state != nil && state.sourceSnap != nil && srcID > 0 {
+		if it, err := state.sourceSnap.ResolveSourceItem(src, "form", srcID); err == nil {
+			return it, nil
+		}
+	}
+	if src != nil && srcID > 0 {
+		if obj, err := fetchFullOptionTypeForm(src, srcID); err == nil && obj != nil {
+			if name == "" {
+				name = strings.TrimSpace(stringFromAny(obj["name"]))
+			}
+			if code == "" {
+				code = strings.TrimSpace(stringFromAny(obj["code"]))
+			}
+			raw, _ := json.Marshal(obj)
+			return SelectedItem{
+				Category: "Forms",
+				Type:     "form",
+				ID:       srcID,
+				Name:     name,
+				RawJSON:  string(raw),
+			}, nil
+		}
+	}
+	if name == "" && code == "" && srcID <= 0 {
+		return SelectedItem{}, fmt.Errorf("form reference has no id, name, or code")
+	}
+	raw, _ := json.Marshal(ref)
+	return SelectedItem{
+		Category: "Forms",
+		Type:     "form",
+		ID:       srcID,
+		Name:     name,
+		RawJSON:  string(raw),
+	}, nil
+}
+
+func extractCatalogFormIDs(obj map[string]interface{}) []int64 {
+	if obj == nil {
+		return nil
+	}
+	seen := map[int64]struct{}{}
+	var ids []int64
+	add := func(ref map[string]interface{}) {
+		if ref == nil {
+			return
+		}
+		id := intFromAny(ref["id"])
+		if id <= 0 {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, key := range []string{"form", "optionTypeForm"} {
+		if m, ok := obj[key].(map[string]interface{}); ok {
+			add(m)
+		}
+	}
+	if fc, ok := obj["formConfig"].(map[string]interface{}); ok {
+		for _, key := range []string{"form", "optionTypeForm"} {
+			if m, ok := fc[key].(map[string]interface{}); ok {
+				add(m)
+			}
+		}
+	}
+	if arr, ok := obj["optionTypeForms"].([]interface{}); ok {
+		for _, e := range arr {
+			if m, ok := e.(map[string]interface{}); ok {
+				add(m)
+			}
+		}
+	}
+	return ids
+}
+
+func catalogFormRefKey(ref map[string]interface{}) string {
+	if ref == nil {
+		return ""
+	}
+	if id := intFromAny(ref["id"]); id > 0 {
+		return fmt.Sprintf("id:%d", id)
+	}
+	code := strings.TrimSpace(stringFromAny(ref["code"]))
+	name := strings.TrimSpace(stringFromAny(ref["name"]))
+	if code == "" && name == "" {
+		return ""
+	}
+	return code + "\x00" + name
+}
+
+func finalizeCatalogFormWriteFields(obj map[string]interface{}) {
+	formType := strings.ToLower(strings.TrimSpace(stringFromAny(obj["formType"])))
+
+	if otf, ok := obj["optionTypeForm"].(map[string]interface{}); ok {
+		if id := intFromAny(otf["id"]); id > 0 {
+			obj["optionTypeForm"] = map[string]interface{}{"id": id}
+			obj["formType"] = "optionTypeForm"
+			delete(obj, "form")
+			delete(obj, "formConfig")
+			delete(obj, "optionTypeForms")
+			return
+		}
+	}
+
+	if formType == "optiontypes" || formType == "" {
+		delete(obj, "optionTypeForm")
+		delete(obj, "form")
+		delete(obj, "formConfig")
+		delete(obj, "optionTypeForms")
+	}
+	stripCatalogFormRefs(obj)
+}
+
+func stripCatalogFormRefs(obj map[string]interface{}) {
+	idOnly := func(m map[string]interface{}) map[string]interface{} {
+		if id := intFromAny(m["id"]); id > 0 {
+			return map[string]interface{}{"id": id}
+		}
+		return nil
+	}
+	for _, key := range []string{"form", "optionTypeForm"} {
+		m, ok := obj[key].(map[string]interface{})
+		if !ok || m == nil {
+			continue
+		}
+		if stripped := idOnly(m); stripped != nil {
+			obj[key] = stripped
+		} else {
+			delete(obj, key)
+		}
+	}
+	if arr, ok := obj["optionTypeForms"].([]interface{}); ok {
+		out := make([]interface{}, 0, len(arr))
+		for _, e := range arr {
+			m, ok := e.(map[string]interface{})
+			if !ok || m == nil {
+				continue
+			}
+			if stripped := idOnly(m); stripped != nil {
+				out = append(out, stripped)
+			}
+		}
+		if len(out) > 0 {
+			obj["optionTypeForms"] = out
+		} else {
+			delete(obj, "optionTypeForms")
+		}
+	}
 }
 
 func catalogItemResult(name, outcome string, notes []string) ItemResult {
@@ -229,15 +608,16 @@ func buildCatalogItemWritePayload(obj map[string]interface{}, optionTypeIDs []in
 	} else {
 		delete(clone, "optionTypes")
 	}
+	finalizeCatalogFormWriteFields(clone)
 	return json.Marshal(map[string]interface{}{"catalogItemType": clone})
 }
 
-func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interface{}) ([]string, error) {
+func remapCatalogInstanceConfig(src, dst *morpheus.Client, state *automationState, cfg map[string]interface{}) ([]string, error) {
 	instanceTypeCode := strings.TrimSpace(stringFromAny(cfg["type"]))
 	var notes []string
 
 	if g, ok := cfg["group"].(map[string]interface{}); ok && g != nil {
-		ref, note, err := resolveCatalogGroupRef(dst, g)
+		ref, note, err := resolveCatalogGroupRef(dst, state, g)
 		if err != nil {
 			return notes, err
 		}
@@ -252,7 +632,7 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 	}
 
 	if c, ok := cfg["cloud"].(map[string]interface{}); ok && c != nil {
-		ref, note, err := resolveCatalogCloudRef(dst, c)
+		ref, note, err := resolveCatalogCloudRef(src, dst, state, c)
 		if err != nil {
 			return notes, err
 		}
@@ -267,15 +647,13 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 	}
 
 	if l, ok := cfg["layout"].(map[string]interface{}); ok && l != nil {
-		layoutCode := strings.TrimSpace(stringFromAny(l["code"]))
-		layoutName := catalogLayoutNameFromSource(src, l)
 		version := strings.TrimSpace(stringFromAny(cfg["version"]))
-		destLayoutID, destLayoutCode, err := findDestCatalogLayoutRef(dst, instanceTypeCode, layoutCode, layoutName, version)
+		destLayoutID, destLayoutCode, layoutNote, err := ensureCatalogLayoutRef(src, dst, state, instanceTypeCode, l, version)
 		if err != nil {
 			return notes, err
 		}
-		if destLayoutID <= 0 {
-			return notes, fmt.Errorf("layout reference %q not found on destination instance type %q — migrate the instance type (and its layouts) first", layoutCode, instanceTypeCode)
+		if layoutNote != "" {
+			notes = append(notes, layoutNote)
 		}
 		ref := map[string]interface{}{"id": destLayoutID}
 		if destLayoutCode != "" {
@@ -285,7 +663,7 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 	}
 
 	if p, ok := cfg["plan"].(map[string]interface{}); ok && p != nil {
-		ref, note, err := resolveCatalogPlanRef(dst, p)
+		ref, note, err := resolveCatalogPlanRef(dst, state, p)
 		if err != nil {
 			return notes, err
 		}
@@ -317,7 +695,7 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 			if idName == "" {
 				continue
 			}
-			destNet, note, err := resolveCatalogNetworkRef(dst, cloudID, idName)
+			destNet, note, err := resolveCatalogNetworkRef(dst, state, cloudID, idName)
 			if err != nil {
 				return notes, err
 			}
@@ -342,7 +720,7 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 			}
 			viName := virtualImageNameFromVolume(vm)
 			if viName != "" {
-				dstVI, err := findDestinationVirtualImageIDByName(dst, viName)
+				dstVI, err := state.findDestVirtualImageIDCached(dst, viName)
 				if err != nil {
 					return notes, err
 				}
@@ -360,12 +738,12 @@ func remapCatalogInstanceConfig(src, dst *morpheus.Client, cfg map[string]interf
 	return notes, nil
 }
 
-func resolveCatalogGroupRef(dst *morpheus.Client, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
+func resolveCatalogGroupRef(dst *morpheus.Client, state *automationState, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
 	sourceName := strings.TrimSpace(stringFromAny(sourceRef["name"]))
 	sourceID := strings.TrimSpace(stringFromAny(sourceRef["id"]))
 
 	if sourceName != "" {
-		gid, err := findDestGroupIDByName(dst, sourceName)
+		gid, err := state.findDestGroupIDCached(dst, sourceName)
 		if err != nil {
 			return nil, "", err
 		}
@@ -405,49 +783,123 @@ func resolveCatalogGroupRef(dst *morpheus.Client, sourceRef map[string]interface
 	return nil, note, nil
 }
 
-func resolveCatalogCloudRef(dst *morpheus.Client, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
-	sourceName := strings.TrimSpace(stringFromAny(sourceRef["name"]))
+func resolveCatalogCloudRef(src, dst *morpheus.Client, state *automationState, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
+	embeddedName := strings.TrimSpace(stringFromAny(sourceRef["name"]))
+	embeddedCode := strings.TrimSpace(stringFromAny(sourceRef["code"]))
 	sourceID := intFromAny(sourceRef["id"])
 
-	if sourceName != "" {
-		cid, err := findDestCloudIDByName(dst, sourceName)
+	cloudName := embeddedName
+	cloudCode := embeddedCode
+
+	// Catalog instanceSpec often embeds a stale display label; resolve the real cloud from source.
+	if src != nil && sourceID > 0 {
+		var zone map[string]interface{}
+		var err error
+		if state != nil && state.sourceSnap != nil {
+			zone, err = state.sourceSnap.CloudObject(src, sourceID)
+		} else {
+			zone, err = fetchFullCloud(src, sourceID)
+		}
+		if err == nil && zone != nil {
+			if n := strings.TrimSpace(stringFromAny(zone["name"])); n != "" {
+				cloudName = n
+			}
+			if c := strings.TrimSpace(stringFromAny(zone["code"])); c != "" {
+				cloudCode = c
+			}
+			if cloudCode == "" {
+				cloudCode = strings.TrimSpace(stringFromAny(zone["zoneCode"]))
+			}
+		}
+	}
+
+	tryNames := uniqueNonEmptyStrings(cloudName, embeddedName)
+	tryCodes := uniqueNonEmptyStrings(cloudCode, embeddedCode)
+
+	for _, n := range tryNames {
+		cid, _, err := state.findDestCloudIDCached(dst, n, "")
 		if err != nil {
 			return nil, "", err
 		}
 		if cid > 0 {
-			return map[string]interface{}{"id": cid, "name": sourceName}, "", nil
+			destName := n
+			if dn := state.destCloudDisplayName(dst, cid); dn != "" {
+				destName = dn
+			}
+			note := ""
+			if !strings.EqualFold(n, embeddedName) && embeddedName != "" {
+				note = fmt.Sprintf("Cloud: mapped source cloud %q (#%d) to destination %q (#%d)", cloudName, sourceID, destName, cid)
+			}
+			return map[string]interface{}{"id": cid, "name": destName}, note, nil
 		}
 	}
-
-	if sourceID > 0 {
-		if cid, cname, ok, err := lookupDestCloudByID(dst, sourceID); err != nil {
+	for _, c := range tryCodes {
+		cid, _, err := state.findDestCloudIDCached(dst, "", c)
+		if err != nil {
 			return nil, "", err
-		} else if ok {
-			note := fmt.Sprintf("Cloud: using destination cloud %q (#%d)", cname, cid)
-			if sourceName != "" {
-				note += fmt.Sprintf(" (source cloud %q not found by name)", sourceName)
+		}
+		if cid > 0 {
+			destName := state.destCloudDisplayName(dst, cid)
+			if destName == "" {
+				destName = c
 			}
-			return map[string]interface{}{"id": cid, "name": cname}, note, nil
+			note := fmt.Sprintf("Cloud: mapped source cloud code %q to destination %q (#%d)", c, destName, cid)
+			return map[string]interface{}{"id": cid, "name": destName}, note, nil
 		}
 	}
 
 	if cid, cname, ok, err := firstDestCloud(dst); err != nil {
 		return nil, "", err
 	} else if ok {
+		label := cloudName
+		if label == "" {
+			label = cloudCode
+		}
+		if label == "" {
+			label = embeddedName
+		}
 		note := fmt.Sprintf("Cloud: using destination cloud %q (#%d)", cname, cid)
-		if sourceName != "" {
-			note += fmt.Sprintf(" (source cloud %q not found)", sourceName)
-		} else if sourceID > 0 {
-			note += fmt.Sprintf(" (source cloud id %d not found)", sourceID)
+		if label != "" {
+			note += fmt.Sprintf(" (source cloud %q", label)
+			if cloudCode != "" && !strings.EqualFold(cloudCode, label) {
+				note += fmt.Sprintf(" code %q", cloudCode)
+			}
+			note += " not found on destination)"
 		}
 		return map[string]interface{}{"id": cid, "name": cname}, note, nil
 	}
 
+	label := cloudName
+	if label == "" {
+		label = embeddedName
+	}
 	note := "Cloud: omitted — no clouds on destination"
-	if sourceName != "" {
-		note = fmt.Sprintf("Cloud: omitted — source cloud %q not found and no clouds on destination", sourceName)
+	if label != "" || cloudCode != "" {
+		note = fmt.Sprintf("Cloud: omitted — source cloud %q", label)
+		if cloudCode != "" && !strings.EqualFold(cloudCode, label) {
+			note += fmt.Sprintf(" (code %q)", cloudCode)
+		}
+		note += " not found on destination"
 	}
 	return nil, note, nil
+}
+
+func uniqueNonEmptyStrings(vals ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		key := strings.ToLower(v)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func lookupDestGroupByID(dst *morpheus.Client, id string) (gid, gname string, ok bool, err error) {
@@ -683,27 +1135,25 @@ func firstDestServicePlan(dst *morpheus.Client) (id int64, code, name string, ok
 	return 0, "", "", false, nil
 }
 
-func resolveCatalogPlanRef(dst *morpheus.Client, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
+func resolveCatalogPlanRef(dst *morpheus.Client, state *automationState, sourceRef map[string]interface{}) (map[string]interface{}, string, error) {
 	sourceCode := strings.TrimSpace(stringFromAny(sourceRef["code"]))
 	sourceID := intFromAny(sourceRef["id"])
 
-	if sourceCode != "" {
-		pid, pcode, _, err := lookupDestServicePlanByCode(dst, sourceCode)
-		if err != nil {
-			return nil, "", err
+	if pid, matchedCode, err := state.findDestServicePlanIDCached(dst, sourceCode, 0); err != nil {
+		return nil, "", err
+	} else if pid > 0 {
+		code := matchedCode
+		if code == "" {
+			code = sourceCode
 		}
-		if pid > 0 {
-			return map[string]interface{}{"id": pid, "code": pcode}, "", nil
-		}
+		return map[string]interface{}{"id": pid, "code": code}, "", nil
 	}
 
 	if sourceID > 0 {
-		pid, pcode, found, err := lookupDestServicePlanByID(dst, sourceID)
-		if err != nil {
+		if pid, _, err := state.findDestServicePlanIDCached(dst, "", sourceID); err != nil {
 			return nil, "", err
-		}
-		if found {
-			label := pcode
+		} else if pid > 0 {
+			label := sourceCode
 			if label == "" {
 				label = fmt.Sprintf("#%d", pid)
 			}
@@ -711,7 +1161,7 @@ func resolveCatalogPlanRef(dst *morpheus.Client, sourceRef map[string]interface{
 			if sourceCode != "" {
 				note += fmt.Sprintf(" (source plan %q not found by code)", sourceCode)
 			}
-			return map[string]interface{}{"id": pid, "code": pcode}, note, nil
+			return map[string]interface{}{"id": pid, "code": sourceCode}, note, nil
 		}
 	}
 
@@ -743,12 +1193,157 @@ func resolveCatalogPlanRef(dst *morpheus.Client, sourceRef map[string]interface{
 	return nil, note, nil
 }
 
-func findDestCatalogLayoutRef(dst *morpheus.Client, instanceTypeCode, layoutCode, layoutName, version string) (int64, string, error) {
-	destITID, exists, err := findDestInstanceTypeID(dst, instanceTypeCode)
+func ensureCatalogLayoutRef(src, dst *morpheus.Client, state *automationState, instanceTypeCode string, layoutRef map[string]interface{}, version string) (int64, string, string, error) {
+	layoutCode := strings.TrimSpace(stringFromAny(layoutRef["code"]))
+	layoutName := strings.TrimSpace(stringFromAny(layoutRef["name"]))
+	if layoutName == "" {
+		layoutName = catalogLayoutNameFromSource(src, state, layoutRef)
+	}
+	systemIT := catalogInstanceTypeIsSystem(src, state, instanceTypeCode)
+
+	destLayoutID, destLayoutCode, err := findDestCatalogLayoutRef(src, dst, state, instanceTypeCode, layoutCode, layoutName, version, systemIT)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if destLayoutID > 0 {
+		return destLayoutID, destLayoutCode, "", nil
+	}
+	if systemIT {
+		label := layoutCode
+		if label == "" {
+			label = layoutName
+		}
+		return 0, "", "", fmt.Errorf("layout %q not found on destination system instance type %q — system layouts cannot be migrated", label, instanceTypeCode)
+	}
+	if src == nil {
+		return 0, "", "", fmt.Errorf("layout %q not found on destination instance type %q and source is unavailable", layoutCode, instanceTypeCode)
+	}
+
+	layoutObj, err := resolveSourceLayoutForCatalog(src, state, instanceTypeCode, layoutRef, layoutCode, layoutName, version)
+	if err != nil {
+		return 0, "", "", fmt.Errorf("layout %q on instance type %q: %v", layoutCode, instanceTypeCode, err)
+	}
+
+	destITID, exists, err := state.findDestInstanceTypeIDCached(dst, instanceTypeCode)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if !exists || destITID <= 0 {
+		return 0, "", "", fmt.Errorf("instance type %q must exist on destination before catalog layout migration", instanceTypeCode)
+	}
+
+	res := migrateInstanceTypeLayout(src, dst, destITID, layoutObj, state)
+	if res.Status != "success" && res.Status != "skipped" {
+		return 0, "", "", fmt.Errorf("layout %q: %s", strings.TrimSpace(stringFromAny(layoutObj["name"])), res.Message)
+	}
+
+	destLayoutID, err = findDestLayoutID(dst, destITID, layoutName, version, layoutCode)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if destLayoutID <= 0 {
+		destLayoutID, _, err = findDestCatalogLayoutRef(src, dst, state, instanceTypeCode, layoutCode, layoutName, version, false)
+		if err != nil {
+			return 0, "", "", err
+		}
+	}
+	if destLayoutID <= 0 {
+		return 0, "", "", fmt.Errorf("layout %q migrated but could not be resolved on destination instance type %q", layoutCode, instanceTypeCode)
+	}
+	destLayoutCode, _ = lookupDestLayoutCode(dst, destITID, destLayoutID)
+	label := layoutName
+	if label == "" {
+		label = layoutCode
+	}
+	note := fmt.Sprintf("Layout: migrated layout %q to destination (#%d)", label, destLayoutID)
+	return destLayoutID, destLayoutCode, note, nil
+}
+
+func resolveSourceLayoutForCatalog(src *morpheus.Client, state *automationState, instanceTypeCode string, layoutRef map[string]interface{}, layoutCode, layoutName, version string) (map[string]interface{}, error) {
+	layoutID := intFromAny(objectID(layoutRef))
+	if layoutID > 0 {
+		var dep SelectedItem
+		var err error
+		if state != nil && state.sourceSnap != nil {
+			dep, err = state.sourceSnap.ResolveSourceItem(src, "layout", layoutID)
+		} else {
+			dep, err = fetchSourceByIDLive(src, "layout", layoutID)
+		}
+		if err == nil {
+			if obj := parseObject(dep.RawJSON); obj != nil {
+				return obj, nil
+			}
+		}
+	}
+
+	var srcIT SelectedItem
+	var err error
+	if state != nil && state.sourceSnap != nil {
+		var ok bool
+		srcIT, ok = state.sourceSnap.FindInstanceTypeByCode(instanceTypeCode)
+		if !ok {
+			srcIT, err = state.sourceSnap.ResolveInstanceTypeByCode(src, instanceTypeCode)
+		} else {
+			err = nil
+		}
+	} else {
+		srcIT, err = findSourceInstanceTypeByCodeLive(src, instanceTypeCode)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var itObj map[string]interface{}
+	if state != nil && state.sourceSnap != nil {
+		itObj, err = state.sourceSnap.InstanceTypeObject(src, srcIT)
+	} else {
+		itObj, err = fetchFullInstanceType(src, srcIT.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if obj := findLayoutOnInstanceType(itObj, layoutCode, layoutName, version); obj != nil {
+		return obj, nil
+	}
+	return nil, fmt.Errorf("layout not found on source instance type %q", instanceTypeCode)
+}
+
+func findLayoutOnInstanceType(itObj map[string]interface{}, layoutCode, layoutName, version string) map[string]interface{} {
+	if itObj == nil {
+		return nil
+	}
+	wantCode := strings.ToLower(strings.TrimSpace(layoutCode))
+	wantName := strings.ToLower(strings.TrimSpace(layoutName))
+	wantVer := strings.ToLower(strings.TrimSpace(version))
+	arr, _ := itObj["instanceTypeLayouts"].([]interface{})
+	for _, le := range arr {
+		layout, ok := le.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		code := strings.ToLower(strings.TrimSpace(stringFromAny(layout["code"])))
+		name := strings.ToLower(strings.TrimSpace(stringFromAny(layout["name"])))
+		ver := strings.ToLower(strings.TrimSpace(stringFromAny(layout["instanceVersion"])))
+		if wantCode != "" && code == wantCode {
+			return layout
+		}
+		if wantName != "" && name == wantName {
+			if wantVer == "" || ver == wantVer {
+				return layout
+			}
+		}
+	}
+	return nil
+}
+
+func findDestCatalogLayoutRef(src, dst *morpheus.Client, state *automationState, instanceTypeCode, layoutCode, layoutName, version string, systemIT bool) (int64, string, error) {
+	destITID, exists, err := state.findDestInstanceTypeIDCached(dst, instanceTypeCode)
 	if err != nil {
 		return 0, "", err
 	}
 	if !exists || destITID <= 0 {
+		if systemIT || catalogInstanceTypeIsSystem(src, state, instanceTypeCode) {
+			return 0, "", fmt.Errorf("system instance type %q not found on destination — built-in instance types should exist on both appliances", instanceTypeCode)
+		}
 		return 0, "", fmt.Errorf("instance type %q must be migrated to destination before catalog item", instanceTypeCode)
 	}
 
@@ -826,6 +1421,24 @@ func requireDestInstanceType(dst *morpheus.Client, code string) error {
 	return nil
 }
 
+func requireDestInstanceTypeCached(src, dst *morpheus.Client, state *automationState, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return fmt.Errorf("catalog item is missing instance type code in config.type")
+	}
+	destITID, exists, err := state.findDestInstanceTypeIDCached(dst, code)
+	if err != nil {
+		return err
+	}
+	if !exists || destITID <= 0 {
+		if catalogInstanceTypeIsSystem(src, state, code) {
+			return fmt.Errorf("system instance type %q not found on destination — built-in instance types should exist on both appliances", code)
+		}
+		return fmt.Errorf("instance type %q must exist on destination before catalog item migration — migrate the instance type first", code)
+	}
+	return nil
+}
+
 func extractCatalogInstanceTypeCode(obj map[string]interface{}) string {
 	if cfg, ok := obj["config"].(map[string]interface{}); ok && cfg != nil {
 		if c := strings.TrimSpace(stringFromAny(cfg["type"])); c != "" {
@@ -835,7 +1448,7 @@ func extractCatalogInstanceTypeCode(obj map[string]interface{}) string {
 	return ""
 }
 
-func catalogLayoutNameFromSource(src *morpheus.Client, layoutRef map[string]interface{}) string {
+func catalogLayoutNameFromSource(src *morpheus.Client, state *automationState, layoutRef map[string]interface{}) string {
 	if src == nil || layoutRef == nil {
 		return ""
 	}
@@ -843,7 +1456,13 @@ func catalogLayoutNameFromSource(src *morpheus.Client, layoutRef map[string]inte
 	if layoutID <= 0 {
 		return ""
 	}
-	dep, err := fetchSourceByID(src, "layout", layoutID)
+	var dep SelectedItem
+	var err error
+	if state != nil && state.sourceSnap != nil {
+		dep, err = state.sourceSnap.ResolveSourceItem(src, "layout", layoutID)
+	} else {
+		dep, err = fetchSourceByIDLive(src, "layout", layoutID)
+	}
 	if err != nil {
 		return ""
 	}
@@ -851,7 +1470,14 @@ func catalogLayoutNameFromSource(src *morpheus.Client, layoutRef map[string]inte
 	return strings.TrimSpace(stringFromAny(obj["name"]))
 }
 
-func findSourceInstanceTypeByCode(src *morpheus.Client, code string) (SelectedItem, error) {
+func snapCatalogObject(snap *SourceSnapshot, src *morpheus.Client, item SelectedItem) (map[string]interface{}, error) {
+	if snap != nil {
+		return snap.CatalogObject(src, item)
+	}
+	return fetchFullCatalogItem(src, item.ID)
+}
+
+func findSourceInstanceTypeByCodeLive(src *morpheus.Client, code string) (SelectedItem, error) {
 	want := strings.ToLower(strings.TrimSpace(code))
 	if want == "" {
 		return SelectedItem{}, fmt.Errorf("empty instance type code")
@@ -895,13 +1521,13 @@ func findSourceInstanceTypeByCode(src *morpheus.Client, code string) (SelectedIt
 	return SelectedItem{}, fmt.Errorf("instance type %q not found on source", code)
 }
 
-func resolveCatalogNetworkRef(dst *morpheus.Client, cloudID int64, idName string) (map[string]interface{}, string, error) {
+func resolveCatalogNetworkRef(dst *morpheus.Client, state *automationState, cloudID int64, idName string) (map[string]interface{}, string, error) {
 	idName = strings.TrimSpace(idName)
 	if idName == "" {
 		return nil, "", nil
 	}
 
-	destNet, err := findDestNetworkRef(dst, cloudID, idName)
+	destNet, err := findDestNetworkRef(dst, state, cloudID, idName)
 	if err != nil {
 		return nil, "", err
 	}
@@ -913,7 +1539,7 @@ func resolveCatalogNetworkRef(dst *morpheus.Client, cloudID int64, idName string
 		return nil, fmt.Sprintf("Network: omitted — source network %q not found (no destination cloud)", idName), nil
 	}
 
-	if first, fname, ok, err := firstDestNetwork(dst, cloudID); err != nil {
+	if first, fname, ok, err := firstDestNetwork(dst, state, cloudID); err != nil {
 		return nil, "", err
 	} else if ok {
 		note := fmt.Sprintf("Network: using destination network %q (source network %q not found on destination cloud)", fname, idName)
@@ -923,11 +1549,11 @@ func resolveCatalogNetworkRef(dst *morpheus.Client, cloudID int64, idName string
 	return nil, fmt.Sprintf("Network: omitted — source network %q not found and no networks on destination cloud", idName), nil
 }
 
-func findDestNetworkRef(dst *morpheus.Client, cloudID int64, idName string) (map[string]interface{}, error) {
+func findDestNetworkRef(dst *morpheus.Client, state *automationState, cloudID int64, idName string) (map[string]interface{}, error) {
 	if cloudID <= 0 || strings.TrimSpace(idName) == "" {
 		return nil, nil
 	}
-	rows, err := listDestNetworksForCloud(dst, cloudID)
+	rows, err := state.listDestNetworksCached(dst, cloudID)
 	if err != nil {
 		return nil, err
 	}
@@ -947,11 +1573,11 @@ func findDestNetworkRef(dst *morpheus.Client, cloudID int64, idName string) (map
 	return nil, nil
 }
 
-func firstDestNetwork(dst *morpheus.Client, cloudID int64) (ref map[string]interface{}, name string, ok bool, err error) {
+func firstDestNetwork(dst *morpheus.Client, state *automationState, cloudID int64) (ref map[string]interface{}, name string, ok bool, err error) {
 	if cloudID <= 0 {
 		return nil, "", false, nil
 	}
-	rows, err := listDestNetworksForCloud(dst, cloudID)
+	rows, err := state.listDestNetworksCached(dst, cloudID)
 	if err != nil {
 		return nil, "", false, err
 	}

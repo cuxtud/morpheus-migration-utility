@@ -7,24 +7,30 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 // automationState tracks destination IDs discovered during a migration run.
 type automationState struct {
+	mu sync.RWMutex
+
 	destTaskNameToID    map[string]int64
 	destWorkflowKeyToID map[string]int64 // name + "\x00" + type
 	destOptionCodeToID  map[string]int64
-	optionTypesLoadErr string
-	progress           ProgressFunc
+	optionTypesLoadErr  string
+	progress            ProgressFunc
+	catalogCache        *catalogDestCache
+	sourceSnap          *SourceSnapshot
 }
 
-func newAutomationState() *automationState {
+func newAutomationState(snap *SourceSnapshot) *automationState {
 	return &automationState{
 		destTaskNameToID:    map[string]int64{},
 		destWorkflowKeyToID: map[string]int64{},
 		destOptionCodeToID:  map[string]int64{},
+		sourceSnap:          snap,
 	}
 }
 
@@ -73,7 +79,7 @@ func (s *automationState) refreshDestTasks(dst *morpheus.Client) error {
 	if err != nil {
 		return err
 	}
-	s.destTaskNameToID = map[string]int64{}
+	next := map[string]int64{}
 	for _, raw := range raws {
 		var row map[string]interface{}
 		if json.Unmarshal(raw, &row) != nil {
@@ -82,9 +88,12 @@ func (s *automationState) refreshDestTasks(dst *morpheus.Client) error {
 		id := intFromAny(row["id"])
 		name := stringFromAny(row["name"])
 		if name != "" && id > 0 {
-			s.destTaskNameToID[name] = id
+			next[name] = id
 		}
 	}
+	s.mu.Lock()
+	s.destTaskNameToID = next
+	s.mu.Unlock()
 	return nil
 }
 
@@ -93,7 +102,7 @@ func (s *automationState) refreshDestWorkflows(dst *morpheus.Client) error {
 	if err != nil {
 		return err
 	}
-	s.destWorkflowKeyToID = map[string]int64{}
+	next := map[string]int64{}
 	for _, raw := range raws {
 		var row map[string]interface{}
 		if json.Unmarshal(raw, &row) != nil {
@@ -103,10 +112,99 @@ func (s *automationState) refreshDestWorkflows(dst *morpheus.Client) error {
 		name := stringFromAny(row["name"])
 		wt := stringFromAny(row["type"])
 		if name != "" && id > 0 {
-			s.destWorkflowKeyToID[workflowKey(name, wt)] = id
+			next[workflowKey(name, wt)] = id
 		}
 	}
+	s.mu.Lock()
+	s.destWorkflowKeyToID = next
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *automationState) destTaskID(name string) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.destTaskNameToID[name]
+}
+
+func (s *automationState) destTaskMapCopy() map[string]int64 {
+	if s == nil {
+		return map[string]int64{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int64, len(s.destTaskNameToID))
+	for k, v := range s.destTaskNameToID {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *automationState) destWorkflowID(name, wtype string) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.destWorkflowKeyToID[workflowKey(name, wtype)]
+}
+
+func (s *automationState) destWorkflowIDByName(name string) int64 {
+	if s == nil || name == "" {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for key, id := range s.destWorkflowKeyToID {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) > 0 && strings.EqualFold(parts[0], name) {
+			return id
+		}
+	}
+	return 0
+}
+
+func (s *automationState) destOptionTypeID(code string) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.destOptionCodeToID[code]
+}
+
+func (s *automationState) setDestOptionTypeID(code string, id int64) {
+	if s == nil || code == "" || id <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.destOptionCodeToID[code] = id
+}
+
+func (s *automationState) destOptionTypeMapCopy() map[string]int64 {
+	if s == nil {
+		return map[string]int64{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int64, len(s.destOptionCodeToID))
+	for k, v := range s.destOptionCodeToID {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *automationState) optionTypesLoadError() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.optionTypesLoadErr
 }
 
 func workflowKey(name, wtype string) string {
@@ -114,19 +212,30 @@ func workflowKey(name, wtype string) string {
 }
 
 func (s *automationState) loadDestOptionTypes(dst *morpheus.Client) {
-	if len(s.destOptionCodeToID) > 0 {
+	if s == nil {
 		return
 	}
-	s.fetchOptionTypesFromDestination(dst)
+	s.mu.RLock()
+	loaded := len(s.destOptionCodeToID) > 0
+	s.mu.RUnlock()
+	if loaded {
+		return
+	}
+	s.reloadDestOptionTypes(dst)
 }
 
 func (s *automationState) reloadDestOptionTypes(dst *morpheus.Client) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.destOptionCodeToID = map[string]int64{}
 	s.optionTypesLoadErr = ""
-	s.fetchOptionTypesFromDestination(dst)
+	s.fetchOptionTypesFromDestinationLocked(dst)
 }
 
-func (s *automationState) fetchOptionTypesFromDestination(dst *morpheus.Client) {
+func (s *automationState) fetchOptionTypesFromDestinationLocked(dst *morpheus.Client) {
 	candidates := []struct {
 		path    string
 		dataKey string
@@ -257,7 +366,7 @@ func ensureNestedWorkflowTasks(src, dst *morpheus.Client, wf map[string]interfac
 		}
 		done[r.name] = struct{}{}
 
-		if state.destTaskNameToID[r.name] > 0 {
+		if state.destTaskID(r.name) > 0 {
 			continue
 		}
 
@@ -321,7 +430,7 @@ func ensureMissingOptionTypes(src, dst *morpheus.Client, wf map[string]interface
 		if code == "" {
 			continue
 		}
-		if state.destOptionCodeToID[code] > 0 {
+		if state.destOptionTypeID(code) > 0 {
 			continue
 		}
 
@@ -329,7 +438,7 @@ func ensureMissingOptionTypes(src, dst *morpheus.Client, wf map[string]interface
 		if err != nil {
 			return &ItemResult{Name: wfName, Type: "workflow", Status: "blocked", Message: fmt.Sprintf("could not create inputs field %q on destination: %v", code, err)}
 		}
-		state.destOptionCodeToID[code] = id
+		state.setDestOptionTypeID(code, id)
 	}
 
 	state.reloadDestOptionTypes(dst)
@@ -361,7 +470,7 @@ func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, st
 
 	state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", name))
 	state.reloadDestOptionTypes(dst)
-	if existingID := state.destOptionCodeToID[code]; existingID > 0 {
+	if existingID := state.destOptionTypeID(code); existingID > 0 {
 		state.reportStep(fmt.Sprintf("Input %q found on destination — updating", name))
 		payload, err := buildOptionTypePayload(src, dst, obj, code)
 		if err != nil {
@@ -385,7 +494,6 @@ func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, st
 }
 
 func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
-	_ = state
 	name := strings.TrimSpace(item.Name)
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(item.RawJSON), &raw); err != nil {
@@ -397,17 +505,9 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		obj = wrapped
 	}
 
-	if src != nil && item.ID > 0 {
-		if body, err := src.GetRaw(fmt.Sprintf("/api/library/option-type-forms/%d", item.ID)); err == nil {
-			var wrap map[string]json.RawMessage
-			if json.Unmarshal(body, &wrap) == nil {
-				if rawForm, ok := wrap["optionTypeForm"]; ok {
-					var fresh map[string]interface{}
-					if json.Unmarshal(rawForm, &fresh) == nil && fresh != nil {
-						obj = fresh
-					}
-				}
-			}
+	if src != nil && state != nil {
+		if fresh, err := state.formObject(src, item); err == nil && fresh != nil {
+			obj = fresh
 		}
 	}
 
@@ -415,31 +515,23 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		name = n
 	}
 
-	if err := ensureFormFieldGroupLibraryInputs(src, dst, state, obj); err != nil {
-		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form inputs: %v", err)}
-	}
-
 	formCode := strings.TrimSpace(stringFromAny(obj["code"]))
 	if formCode == "" {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: "form has empty code — cannot migrate"}
 	}
 
-	existingID := findOptionTypeFormIDByCode(dst, formCode)
-	var destForm map[string]interface{}
-	if existingID > 0 {
-		body, err := dst.GetRaw(fmt.Sprintf("/api/library/option-type-forms/%d", existingID))
-		if err != nil {
-			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("load destination form: %v", err)}
-		}
-		var wrap map[string]json.RawMessage
-		if json.Unmarshal(body, &wrap) == nil {
-			if rawForm, ok := wrap["optionTypeForm"]; ok {
-				var dm map[string]interface{}
-				if json.Unmarshal(rawForm, &dm) == nil && dm != nil {
-					destForm = dm
-				}
-			}
-		}
+	srcFormID := intFromAny(obj["id"])
+	existingID := findOptionTypeFormID(dst, formCode, name)
+	if existingID > 0 && state != nil {
+		state.registerDestForm(existingID, formCode, name, srcFormID)
+	}
+
+	if err := ensureFormFieldGroupLibraryInputs(src, dst, state, obj); err != nil {
+		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form inputs: %v", err)}
+	}
+	destForm, err := loadDestinationOptionTypeForm(dst, existingID)
+	if err != nil {
+		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("load destination form: %v", err)}
 	}
 
 	payload, err := buildOptionTypeFormPayload(src, dst, obj, destForm)
@@ -448,21 +540,40 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	}
 
 	if existingID > 0 {
-		_, err = dst.PutRaw(fmt.Sprintf("/api/library/option-type-forms/%d", existingID), payload)
+		outcome, msg, err := putOptionTypeForm(dst, src, obj, existingID, formCode, name)
 		if err != nil {
-			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("update form: %v", err)}
+			if isDuplicateErr(err) && findOptionTypeFormID(dst, formCode, name) > 0 {
+				return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form already exists on destination"}
+			}
+			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: err.Error()}
 		}
-		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "updated", Message: "Updated form on destination"}
+		if state != nil {
+			state.registerDestForm(existingID, formCode, name, srcFormID)
+		}
+		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: outcome, Message: msg}
 	}
 
 	body, err := dst.PostRaw("/api/library/option-type-forms", payload)
 	if err != nil {
+		if isDuplicateErr(err) {
+			existingID = findOptionTypeFormID(dst, formCode, name)
+			if existingID > 0 {
+				outcome, msg, putErr := putOptionTypeForm(dst, src, obj, existingID, formCode, name)
+				if putErr != nil {
+					return ItemResult{Name: name, Type: item.Type, Status: "error", Message: putErr.Error()}
+				}
+				return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: outcome, Message: msg}
+			}
+		}
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("create form: %v", err)}
 	}
-	if parseOptionTypeFormIDFromResponse(body) <= 0 {
-		if findOptionTypeFormIDByCode(dst, formCode) > 0 {
+	newID := parseOptionTypeFormIDFromResponse(body)
+	if newID <= 0 {
+		if findOptionTypeFormID(dst, formCode, name) > 0 {
 			return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form may already exist on destination"}
 		}
+	} else if state != nil {
+		state.registerDestForm(newID, formCode, name, srcFormID)
 	}
 	return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created form on destination"}
 }
@@ -584,7 +695,7 @@ func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automatio
 
 	state.reloadDestOptionTypes(dst)
 	if code != "" {
-		if id := state.destOptionCodeToID[code]; id > 0 {
+		if id := state.destOptionTypeID(code); id > 0 {
 			return id, nil
 		}
 	}
@@ -608,7 +719,7 @@ func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automatio
 		return 0, fmt.Errorf("library input missing code")
 	}
 
-	if id := state.destOptionCodeToID[code]; id > 0 {
+	if id := state.destOptionTypeID(code); id > 0 {
 		return id, nil
 	}
 
@@ -621,80 +732,90 @@ func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automatio
 	if err != nil {
 		return 0, err
 	}
-	state.destOptionCodeToID[code] = id
+	state.setDestOptionTypeID(code, id)
 	return id, nil
 }
 
-func ensureFormFromRef(src, dst *morpheus.Client, ref map[string]interface{}, state *automationState) (int64, *ItemResult) {
-	formName := strings.TrimSpace(stringFromAny(ref["name"]))
-	formCode := strings.TrimSpace(stringFromAny(ref["code"]))
+func resolveDestinationFormID(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (formCode, formName string, destID int64) {
+	formCode = strings.TrimSpace(stringFromAny(ref["code"]))
+	formName = strings.TrimSpace(stringFromAny(ref["name"]))
 	srcFormID := intFromAny(ref["id"])
 
-	if formCode != "" {
-		if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
-			return destID, nil
+	if state != nil && srcFormID > 0 {
+		if destID = state.destFormIDForSource(srcFormID); destID > 0 {
+			return formCode, formName, destID
 		}
 	}
 
-	if src != nil && srcFormID > 0 {
-		if formObj, err := fetchFullOptionTypeForm(src, srcFormID); err == nil && formObj != nil {
-			if formCode == "" {
-				formCode = strings.TrimSpace(stringFromAny(formObj["code"]))
-			}
-			if formName == "" {
-				formName = strings.TrimSpace(stringFromAny(formObj["name"]))
-			}
-			if formCode != "" {
-				if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
-					return destID, nil
-				}
+	lookup := func(code, name string) int64 {
+		var id int64
+		if state != nil {
+			id = state.findDestFormID(dst, code, name)
+		}
+		if id <= 0 {
+			id = findOptionTypeFormID(dst, code, name)
+			if id > 0 && state != nil {
+				state.registerDestForm(id, code, name, srcFormID)
 			}
 		}
+		return id
 	}
 
-	if src == nil || srcFormID <= 0 {
-		label := formName
-		if label == "" {
-			label = formCode
-		}
-		if label == "" && srcFormID > 0 {
-			label = fmt.Sprintf("#%d", srcFormID)
-		}
-		return 0, &ItemResult{
-			Status:  "blocked",
-			Message: fmt.Sprintf("form %q is not on destination and could not be loaded from source", label),
-		}
+	destID = lookup(formCode, formName)
+	if destID > 0 {
+		return formCode, formName, destID
 	}
 
-	if formName == "" {
-		formName = formCode
-	}
-	state.reportStep(fmt.Sprintf("Creating form %q on destination", formName))
-	res := migrateFormWithAutomation(src, dst, SelectedItem{
-		Category: "Forms",
-		Type:     "form",
-		ID:       srcFormID,
-		Name:     formName,
-		RawJSON:  "{}",
-	}, state)
-	if res.Status != "success" && res.Status != "skipped" {
-		return 0, &res
-	}
-
-	if formCode == "" {
-		if formObj, err := fetchFullOptionTypeForm(src, srcFormID); err == nil {
+	formObj := resolveSourceFormObject(src, state, srcFormID, formCode, formName)
+	if formObj != nil {
+		if formCode == "" {
 			formCode = strings.TrimSpace(stringFromAny(formObj["code"]))
 		}
-	}
-	if formCode != "" {
-		if destID := findOptionTypeFormIDByCode(dst, formCode); destID > 0 {
-			return destID, nil
+		if formName == "" {
+			formName = strings.TrimSpace(stringFromAny(formObj["name"]))
+		}
+		if destID = lookup(formCode, formName); destID > 0 {
+			return formCode, formName, destID
 		}
 	}
-	return 0, &ItemResult{
-		Status:  "blocked",
-		Message: fmt.Sprintf("form %q migrated but not found on destination", formName),
+
+	// Catalog payloads sometimes embed a display label that differs from the library form name.
+	for _, n := range uniqueNonEmptyStrings(formName, strings.TrimSpace(stringFromAny(ref["name"]))) {
+		if destID = lookup("", n); destID > 0 {
+			return formCode, n, destID
+		}
 	}
+	for _, c := range uniqueNonEmptyStrings(formCode, strings.TrimSpace(stringFromAny(ref["code"]))) {
+		if destID = lookup(c, ""); destID > 0 {
+			return c, formName, destID
+		}
+	}
+
+	return formCode, formName, 0
+}
+
+func resolveSourceFormObject(src *morpheus.Client, state *automationState, srcFormID int64, code, name string) map[string]interface{} {
+	if state != nil && state.sourceSnap != nil && srcFormID > 0 {
+		if it, ok := state.sourceSnap.Lookup("form", srcFormID); ok {
+			if obj := unwrapFormObject(parseObject(it.RawJSON)); obj != nil {
+				return obj
+			}
+		}
+	}
+	if src != nil && srcFormID > 0 {
+		if obj, err := fetchFullOptionTypeForm(src, srcFormID); err == nil && obj != nil {
+			return obj
+		}
+	}
+	if state != nil && state.sourceSnap != nil && (code != "" || name != "") {
+		item := SelectedItem{Type: "form", ID: srcFormID, Name: name, RawJSON: mustJSON(map[string]interface{}{
+			"id": srcFormID, "name": name, "code": code,
+		})}
+		if obj, err := state.sourceSnap.FormObject(src, item); err == nil && obj != nil {
+			return obj
+		}
+	}
+	return nil
 }
 
 func walkFormOptions(form map[string]interface{}, fn func(groupCode string, opt map[string]interface{})) {
@@ -1152,6 +1273,16 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 		delete(clone, k)
 	}
 
+	// Keep destination identity on update — source name/code can collide with another form's name.
+	if destForm != nil {
+		if dn := strings.TrimSpace(stringFromAny(destForm["name"])); dn != "" {
+			clone["name"] = dn
+		}
+		if dc := strings.TrimSpace(stringFromAny(destForm["code"])); dc != "" {
+			clone["code"] = dc
+		}
+	}
+
 	if destForm == nil {
 		rewriteUUIDFieldGroupCodesToSlugs(clone)
 	}
@@ -1280,43 +1411,94 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 	return json.Marshal(map[string]interface{}{"optionTypeForm": root})
 }
 
-func findOptionTypeFormIDByCode(dst *morpheus.Client, code string) int64 {
-	code = strings.TrimSpace(code)
-	if code == "" {
+// findOptionTypeFormID resolves an existing destination form. Morpheus enforces globally
+// unique form names, so name match takes precedence over code when both are present.
+func findOptionTypeFormID(dst *morpheus.Client, code, name string) int64 {
+	wantCode := strings.ToLower(strings.TrimSpace(code))
+	wantName := strings.ToLower(strings.TrimSpace(name))
+	if wantCode == "" && wantName == "" {
 		return 0
 	}
-	want := strings.ToLower(code)
-	path := fmt.Sprintf("/api/library/option-type-forms?phrase=%s&max=100&offset=0", url.QueryEscape(code))
-	body, err := dst.GetRaw(path)
+	raws, err := paginateList(dst, "/api/library/option-type-forms", "optionTypeForms")
 	if err != nil {
 		return 0
 	}
+	var byCode, byName int64
+	for _, raw := range raws {
+		var row map[string]interface{}
+		if json.Unmarshal(raw, &row) != nil {
+			continue
+		}
+		id := intFromAny(row["id"])
+		if id <= 0 {
+			continue
+		}
+		if wantName != "" && strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == wantName {
+			byName = id
+		}
+		if wantCode != "" && strings.ToLower(strings.TrimSpace(stringFromAny(row["code"]))) == wantCode {
+			byCode = id
+		}
+	}
+	if byName > 0 {
+		return byName
+	}
+	return byCode
+}
+
+func findOptionTypeFormIDByCode(dst *morpheus.Client, code string) int64 {
+	return findOptionTypeFormID(dst, code, "")
+}
+
+func findOptionTypeFormIDByName(dst *morpheus.Client, name string) int64 {
+	return findOptionTypeFormID(dst, "", name)
+}
+
+func putOptionTypeForm(dst, src *morpheus.Client, obj map[string]interface{}, formID int64, formCode, name string) (outcome, msg string, err error) {
+	destForm, err := loadDestinationOptionTypeForm(dst, formID)
+	if err != nil {
+		return "", "", fmt.Errorf("load destination form: %v", err)
+	}
+	payload, err := buildOptionTypeFormPayload(src, dst, obj, destForm)
+	if err != nil {
+		return "", "", fmt.Errorf("prepare form: %v", err)
+	}
+	_, err = dst.PutRaw(fmt.Sprintf("/api/library/option-type-forms/%d", formID), payload)
+	if err != nil && isDuplicateErr(err) {
+		if altID := findOptionTypeFormIDByName(dst, name); altID > 0 && altID != formID {
+			return putOptionTypeForm(dst, src, obj, altID, formCode, name)
+		}
+		if findOptionTypeFormID(dst, formCode, name) > 0 || findOptionTypeFormIDByName(dst, name) > 0 {
+			return "skipped", "Form already exists on destination", nil
+		}
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("update form: %v", err)
+	}
+	return "updated", "Updated form on destination", nil
+}
+
+func loadDestinationOptionTypeForm(dst *morpheus.Client, id int64) (map[string]interface{}, error) {
+	if id <= 0 {
+		return nil, nil
+	}
+	body, err := dst.GetRaw(fmt.Sprintf("/api/library/option-type-forms/%d", id))
+	if err != nil {
+		return nil, err
+	}
 	var wrap map[string]json.RawMessage
 	if json.Unmarshal(body, &wrap) != nil {
-		return 0
+		return nil, nil
 	}
-	raw, ok := wrap["optionTypeForms"]
+	rawForm, ok := wrap["optionTypeForm"]
 	if !ok {
-		return 0
+		return nil, nil
 	}
-	var items []json.RawMessage
-	if json.Unmarshal(raw, &items) != nil {
-		return 0
+	var dm map[string]interface{}
+	if json.Unmarshal(rawForm, &dm) != nil || dm == nil {
+		return nil, nil
 	}
-	for _, it := range items {
-		var row map[string]interface{}
-		if json.Unmarshal(it, &row) != nil {
-			continue
-		}
-		c := strings.TrimSpace(stringFromAny(row["code"]))
-		if strings.ToLower(c) != want {
-			continue
-		}
-		if id := intFromAny(row["id"]); id > 0 {
-			return id
-		}
-	}
-	return 0
+	return dm, nil
 }
 
 func parseOptionTypeFormIDFromResponse(body []byte) int64 {
@@ -1520,187 +1702,6 @@ func findOptionTypeIDByCode(dst *morpheus.Client, code string) int64 {
 	return 0
 }
 
-func ensureOptionTypeListDependency(src, dst *morpheus.Client, optionType map[string]interface{}) error {
-	ol, ok := optionType["optionList"].(map[string]interface{})
-	if !ok || ol == nil {
-		return nil
-	}
-	srcListID := intFromAny(ol["id"])
-	srcListName := strings.TrimSpace(stringFromAny(ol["name"]))
-	if srcListName == "" && srcListID > 0 && src != nil {
-		name, err := fetchSourceOptionTypeListName(src, srcListID)
-		if err == nil {
-			srcListName = name
-		}
-	}
-	if srcListName == "" {
-		// If we cannot identify the list by name, keep the original object.
-		return nil
-	}
-
-	if dstID := findOptionTypeListIDByName(dst, srcListName); dstID > 0 {
-		optionType["optionList"] = map[string]interface{}{"id": dstID}
-		return nil
-	}
-
-	if src == nil || srcListID <= 0 {
-		return fmt.Errorf("option list %q is not present on destination and source details are unavailable", srcListName)
-	}
-
-	srcObj, err := fetchSourceOptionTypeList(src, srcListID)
-	if err != nil {
-		return fmt.Errorf("option list %q is not present on destination and could not be loaded from source id %d: %v", srcListName, srcListID, err)
-	}
-	dstID, err := createOptionTypeListOnDestination(dst, srcObj)
-	if err != nil {
-		return fmt.Errorf("failed to create option list %q on destination: %v", srcListName, err)
-	}
-	optionType["optionList"] = map[string]interface{}{"id": dstID}
-	return nil
-}
-
-func fetchSourceOptionTypeListName(src *morpheus.Client, id int64) (string, error) {
-	obj, err := fetchSourceOptionTypeList(src, id)
-	if err != nil {
-		return "", err
-	}
-	name := strings.TrimSpace(stringFromAny(obj["name"]))
-	if name == "" {
-		return "", fmt.Errorf("option list id %d has empty name", id)
-	}
-	return name, nil
-}
-
-func fetchSourceOptionTypeList(src *morpheus.Client, id int64) (map[string]interface{}, error) {
-	paths := []string{
-		fmt.Sprintf("/api/library/option-type-lists/%d", id),
-		fmt.Sprintf("/api/option-type-lists/%d", id),
-	}
-	var lastErr error
-	for _, p := range paths {
-		body, err := src.GetRaw(p)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		var wrap map[string]json.RawMessage
-		if err := json.Unmarshal(body, &wrap); err != nil {
-			lastErr = err
-			continue
-		}
-		raw, ok := wrap["optionTypeList"]
-		if !ok {
-			lastErr = fmt.Errorf("missing optionTypeList key in response")
-			continue
-		}
-		var obj map[string]interface{}
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			lastErr = err
-			continue
-		}
-		return obj, nil
-	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("could not fetch option list id %d", id)
-}
-
-func findOptionTypeListIDByName(dst *morpheus.Client, name string) int64 {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return 0
-	}
-	p := fmt.Sprintf("/api/library/option-type-lists?phrase=%s&max=100&offset=0", url.QueryEscape(name))
-	want := strings.ToLower(name)
-	body, err := dst.GetRaw(p)
-	if err != nil {
-		return 0
-	}
-	var wrap map[string]json.RawMessage
-	if json.Unmarshal(body, &wrap) != nil {
-		return 0
-	}
-	raw, ok := wrap["optionTypeLists"]
-	if !ok {
-		return 0
-	}
-	var items []json.RawMessage
-	if json.Unmarshal(raw, &items) != nil {
-		return 0
-	}
-	for _, it := range items {
-		var row map[string]interface{}
-		if json.Unmarshal(it, &row) != nil {
-			continue
-		}
-		n := strings.ToLower(strings.TrimSpace(stringFromAny(row["name"])))
-		if n != want {
-			continue
-		}
-		if id := intFromAny(row["id"]); id > 0 {
-			return id
-		}
-	}
-	return 0
-}
-
-func createOptionTypeListOnDestination(dst *morpheus.Client, srcObj map[string]interface{}) (int64, error) {
-	var clone map[string]interface{}
-	raw, err := json.Marshal(srcObj)
-	if err != nil {
-		return 0, err
-	}
-	if err := json.Unmarshal(raw, &clone); err != nil {
-		return 0, err
-	}
-	for _, k := range []string{
-		"id", "dateCreated", "lastUpdated", "createdBy", "account",
-		"owner", "stats", "uuid",
-	} {
-		delete(clone, k)
-	}
-
-	payload, err := json.Marshal(map[string]interface{}{"optionTypeList": clone})
-	if err != nil {
-		return 0, err
-	}
-	const createPath = "/api/library/option-type-lists"
-	body, err := dst.PostRaw(createPath, payload)
-	if err != nil {
-		return 0, err
-	}
-	if id := parseOptionTypeListIDFromResponse(body); id > 0 {
-		return id, nil
-	}
-	if id := findOptionTypeListIDByName(dst, stringFromAny(clone["name"])); id > 0 {
-		return id, nil
-	}
-	return 0, fmt.Errorf("POST %s: response missing optionTypeList id", createPath)
-}
-
-func parseOptionTypeListIDFromResponse(body []byte) int64 {
-	var root map[string]interface{}
-	if json.Unmarshal(body, &root) == nil {
-		if id := intFromAny(root["id"]); id > 0 {
-			return id
-		}
-	}
-	var wrap map[string]json.RawMessage
-	if json.Unmarshal(body, &wrap) != nil {
-		return 0
-	}
-	raw, ok := wrap["optionTypeList"]
-	if !ok {
-		return 0
-	}
-	var row map[string]interface{}
-	if json.Unmarshal(raw, &row) != nil {
-		return 0
-	}
-	return intFromAny(row["id"])
-}
-
 func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
 	name := strings.TrimSpace(item.Name)
 	var obj map[string]interface{}
@@ -1728,7 +1729,7 @@ func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("list destination tasks: %v", err)}
 	}
 
-	existingID := state.destTaskNameToID[name]
+	existingID := state.destTaskID(name)
 	if existingID > 0 {
 		if taskNeedsUpdate(obj, dst, existingID) {
 			_, err = dst.PutRaw(fmt.Sprintf("/api/tasks/%d", existingID), payload)
@@ -1749,7 +1750,7 @@ func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 			if err2 := state.refreshDestTasks(dst); err2 != nil {
 				return ItemResult{Name: name, Type: item.Type, Status: "error", Message: err2.Error()}
 			}
-			if id := state.destTaskNameToID[name]; id > 0 {
+			if id := state.destTaskID(name); id > 0 {
 				if taskNeedsUpdate(obj, dst, id) {
 					_, err = dst.PutRaw(fmt.Sprintf("/api/tasks/%d", id), payload)
 					if err != nil {
@@ -1840,7 +1841,7 @@ func verifyAndRollbackNewRepositoryTask(dst *morpheus.Client, taskName string, w
 	if err := state.refreshDestTasks(dst); err != nil {
 		return fmt.Sprintf("PARTIAL MIGRATION: could not verify the Git repository link (%v). Inspect the task on the destination.", err)
 	}
-	tid := state.destTaskNameToID[taskName]
+	tid := state.destTaskID(taskName)
 	if tid <= 0 {
 		return "PARTIAL MIGRATION: the task was not found after create when verifying the repository link. Check permissions and duplicate names."
 	}
@@ -2025,13 +2026,13 @@ func migrateWorkflowWithAutomation(src, dst *morpheus.Client, item SelectedItem,
 		return *dep
 	}
 
-	tasksPayload, err := buildWorkflowTasksPayload(obj, state.destTaskNameToID)
+	tasksPayload, err := buildWorkflowTasksPayload(obj, state.destTaskMapCopy())
 	if err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: err.Error()}
 	}
 
 	state.reloadDestOptionTypes(dst)
-	optIDs, optWarn := mapWorkflowOptionTypes(obj["optionTypes"], state.destOptionCodeToID)
+	optIDs, optWarn := mapWorkflowOptionTypes(obj["optionTypes"], state.destOptionTypeMapCopy())
 
 	out := map[string]interface{}{
 		"type":              wfType,
@@ -2062,17 +2063,16 @@ func migrateWorkflowWithAutomation(src, dst *morpheus.Client, item SelectedItem,
 	if optWarn != "" {
 		msgExtra = "; " + optWarn
 	}
-	if state.optionTypesLoadErr != "" && len(optIDs) == 0 && obj["optionTypes"] != nil {
+	if loadErr := state.optionTypesLoadError(); loadErr != "" && len(optIDs) == 0 && obj["optionTypes"] != nil {
 		if arr, ok := obj["optionTypes"].([]interface{}); ok && len(arr) > 0 {
-			msgExtra = msgExtra + "; " + state.optionTypesLoadErr
+			msgExtra = msgExtra + "; " + loadErr
 		}
 	}
 
 	if err := state.refreshDestWorkflows(dst); err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("list workflows: %v", err)}
 	}
-	wfKey := workflowKey(name, wfType)
-	existingID := state.destWorkflowKeyToID[wfKey]
+	existingID := state.destWorkflowID(name, wfType)
 
 	if existingID > 0 {
 		_, err = dst.PutRaw(fmt.Sprintf("/api/task-sets/%d", existingID), payload)
@@ -2086,7 +2086,7 @@ func migrateWorkflowWithAutomation(src, dst *morpheus.Client, item SelectedItem,
 	if err != nil {
 		if isDuplicateErr(err) {
 			if err2 := state.refreshDestWorkflows(dst); err2 == nil {
-				if id := state.destWorkflowKeyToID[wfKey]; id > 0 {
+				if id := state.destWorkflowID(name, wfType); id > 0 {
 					_, err = dst.PutRaw(fmt.Sprintf("/api/task-sets/%d", id), payload)
 					if err != nil {
 						return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("update after duplicate: %v", err)}
@@ -2210,10 +2210,12 @@ func isDuplicateErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(strings.ToLower(s), "already exists") ||
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "already exists") ||
+		strings.Contains(s, "already in use") ||
+		strings.Contains(s, "must be unique") ||
 		strings.Contains(s, "422") ||
-		strings.Contains(strings.ToLower(s), "duplicate")
+		strings.Contains(s, "duplicate")
 }
 
 // ---- integration resolution ----

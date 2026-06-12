@@ -1239,6 +1239,12 @@
 
   .item-row:last-child { border-bottom: none; }
   .item-row:hover { background: var(--surface2); }
+  .item-row-inventory { opacity: 0.72; }
+  .item-check-placeholder {
+    display: inline-block;
+    width: 16px;
+    flex-shrink: 0;
+  }
 
   .item-check {
     width: 15px; height: 15px;
@@ -1351,6 +1357,22 @@
   .result-outcome.updated { color: #a5b4fc; border-color: rgba(129, 140, 232, 0.35); }
   .result-outcome.created { color: #7dd3fc; border-color: rgba(56, 189, 248, 0.35); }
   .result-msg { color: var(--text2); font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+  .result-duration {
+    color: var(--text3);
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 4.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .migration-elapsed {
+    margin-left: auto;
+    color: var(--text3);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
 
   /* Progress bar */
   .progress-wrap {
@@ -2135,6 +2157,7 @@
         <div class="discovery-banner">
           <div class="spinner"></div>
           <span id="migrationMsg">Migrating items...</span>
+          <span id="migrationElapsed" class="migration-elapsed hidden"></span>
         </div>
         <div class="progress-wrap">
           <div class="progress-bar" id="migrationProgress" style="width: 0%"></div>
@@ -2188,6 +2211,10 @@
           <div class="stat-chip">
             <div class="stat-num" id="resPartial" style="color: #fb923c;">0</div>
             <div class="stat-label">Partial</div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-num" id="resDuration" style="color: #94a3b8; font-size: 18px;">—</div>
+            <div class="stat-label">Total time</div>
           </div>
         </div>
 
@@ -2256,6 +2283,31 @@ async function api(path, method='GET', body=null) {
   return data;
 }
 
+function discoveryDurationLabel(d) {
+  if (!d || d.durationMs == null || d.durationMs <= 0) return '—';
+  return formatDuration(d.durationMs);
+}
+
+function formatDuration(ms) {
+  if (ms == null || ms < 0 || !Number.isFinite(ms)) return '—';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(sec < 10 ? 1 : 0)}s`;
+  const min = Math.floor(sec / 60);
+  const rem = Math.round(sec % 60);
+  if (min < 60) return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
+  const hr = Math.floor(min / 60);
+  const mrem = min % 60;
+  return mrem > 0 ? `${hr}h ${mrem}m` : `${hr}h`;
+}
+
+function updateMigrationElapsedUI() {
+  const el = document.getElementById('migrationElapsed');
+  if (!el || !state.migrationStartedAt) return;
+  el.textContent = formatDuration(Date.now() - state.migrationStartedAt);
+  el.classList.remove('hidden');
+}
+
 function resetMigrationProgressUI() {
   document.getElementById('migrationProgress').style.width = '0%';
   document.getElementById('migrationCurrentStep').textContent = '';
@@ -2264,6 +2316,12 @@ function resetMigrationProgressUI() {
   log.classList.add('hidden');
   document.getElementById('migrationQueueWrap').classList.add('hidden');
   document.getElementById('migrationQueueList').innerHTML = '';
+  const elapsed = document.getElementById('migrationElapsed');
+  if (elapsed) {
+    elapsed.textContent = '';
+    elapsed.classList.add('hidden');
+  }
+  state.migrationStartedAt = 0;
 }
 
 function appendMigrationLogLine(msg, active) {
@@ -2306,9 +2364,11 @@ function updateMigrationProgressUI(ev) {
     if (phase === 'step' || phase === 'preparing') {
       appendMigrationLogLine(msg, true);
     } else if (phase === 'item_done') {
-      appendMigrationLogLine(msg, false);
+      const dur = ev.durationMs != null && ev.durationMs > 0 ? ` · ${formatDuration(ev.durationMs)}` : '';
+      appendMigrationLogLine(msg + dur, false);
     }
   }
+  updateMigrationElapsedUI();
   if (phase === 'queue' && ev.queue && ev.queue.length) {
     state.migrationQueue = ev.queue;
     renderMigrationQueue(ev.queue, 0, 0);
@@ -2337,6 +2397,12 @@ function migrationStreamError(err) {
       'The migration may still have completed: check the destination appliance and server logs, then retry if needed.'
     );
   }
+  if (/unexpected token|is not valid json|json\.parse/i.test(msg)) {
+    return new Error(
+      'Migration stream was cut off before the final result arrived (incomplete data). ' +
+      'The server may still be running the migration — check the destination appliance and server logs before re-running.'
+    );
+  }
   if (/without a result/i.test(msg)) {
     return new Error(
       'Migration stream ended without a final result (connection closed early). ' +
@@ -2344,6 +2410,14 @@ function migrationStreamError(err) {
     );
   }
   return err instanceof Error ? err : new Error(msg);
+}
+
+function parseMigrateStreamLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch (_) {
+    return null;
+  }
 }
 
 async function apiMigrateStream(path, body, onEvent) {
@@ -2379,16 +2453,19 @@ async function apiMigrateStream(path, body, onEvent) {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const row = JSON.parse(trimmed);
+        const row = parseMigrateStreamLine(trimmed);
+        if (!row) continue;
         if (row.type === 'progress' && row.event) onEvent(row.event);
         else if (row.type === 'heartbeat') { /* keep-alive */ }
         else if (row.type === 'result') result = row.result;
       }
     }
     if (buf.trim()) {
-      const row = JSON.parse(buf.trim());
-      if (row.type === 'progress' && row.event) onEvent(row.event);
-      else if (row.type === 'result') result = row.result;
+      const row = parseMigrateStreamLine(buf.trim());
+      if (row) {
+        if (row.type === 'progress' && row.event) onEvent(row.event);
+        else if (row.type === 'result') result = row.result;
+      }
     }
   } catch (err) {
     throw migrationStreamError(err);
@@ -3026,7 +3103,7 @@ function renderDiscoveredAppliancesTable() {
       <td style="font-family:var(--font-mono);font-size:11px;">${escapeHtml(snap.url || e.url || '')}</td>
       <td><span class="health-pill ${health.cls}">${escapeHtml(health.label)}</span></td>
       <td>${disc.total != null ? disc.total : 0} <span style="color:var(--text3);font-size:11px;">(${(disc.categories || []).length} cat.)</span></td>
-      <td style="font-size:11px;color:var(--text2);">${escapeHtml(at)}</td>
+      <td style="font-size:11px;color:var(--text2);">${escapeHtml(at)}${disc.durationMs > 0 ? `<br><span style="color:var(--text3);">${escapeHtml(discoveryDurationLabel(disc))}</span>` : ''}</td>
       <td style="white-space:nowrap;" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="openFleetApplianceDetail('${e.id}')">View</button>
         <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:11px;" onclick="fleetDiscoverOne('${e.id}')">↻</button>
@@ -3344,7 +3421,9 @@ async function renderFleetApplianceDetail(profileId) {
   document.getElementById('fleetDetailHealthPill').innerHTML =
     '<span class="health-pill ' + health.cls + '">' + escapeHtml(health.label) + '</span>';
 
+  const discDur = discoveryDurationLabel(disc);
   document.getElementById('fleetDetailStats').innerHTML = `
+    <div class="stat-chip"><div class="stat-num">${discDur}</div><div class="stat-label">Discovery time</div></div>
     <div class="stat-chip"><div class="stat-num">${disc.total != null ? disc.total : 0}</div><div class="stat-label">Resources</div></div>
     <div class="stat-chip"><div class="stat-num">${(disc.categories || []).length}</div><div class="stat-label">Categories</div></div>
     <div class="stat-chip"><div class="stat-num">${(disc.errors || []).length}</div><div class="stat-label">API warnings</div></div>
@@ -5521,7 +5600,7 @@ async function startDiscovery() {
     'Loading catalog items, blueprints & apps...',
     'Enumerating tenants, roles, users, policies & groups...',
     'Loading Cypher entries...',
-    'Almost done — collating results...'
+    'Fetching full details for forms, catalogs, and instance types...'
   ];
 
   let mi = 0;
@@ -5529,23 +5608,35 @@ async function startDiscovery() {
   const logEl = document.getElementById('discoveryLog');
   const progEl = document.getElementById('discoveryProgress');
 
+  state.discoveryStartedAt = Date.now();
   const ticker = setInterval(() => {
-    if (mi < msgs.length) {
-      msgEl.textContent = msgs[mi];
+    const elapsed = formatDuration(Date.now() - state.discoveryStartedAt);
+    if (mi < msgs.length - 1) {
+      msgEl.textContent = `${msgs[mi]} · ${elapsed}`;
       logEl.innerHTML += `<div style="color:var(--text3);">[${new Date().toLocaleTimeString()}] ${msgs[mi]}</div>`;
       logEl.scrollTop = logEl.scrollHeight;
-      progEl.style.width = `${Math.min(95, (mi/msgs.length)*100)}%`;
+      progEl.style.width = `${Math.min(88, ((mi + 1) / msgs.length) * 100)}%`;
       mi++;
+    } else if (mi === msgs.length - 1) {
+      msgEl.textContent = `${msgs[mi]} · ${elapsed}`;
+      progEl.style.width = '92%';
+      mi++;
+    } else {
+      msgEl.textContent = `Discovering… · ${elapsed}`;
     }
-  }, 900);
+  }, 800);
 
   try {
     const res = await api('/api/discover', 'POST', payload);
     const disc = res && res.result ? res.result : res;
     const discoveryId = res && typeof res.discoveryId === 'number' ? res.discoveryId : 0;
     clearInterval(ticker);
+    const discoveryStartedAt = state.discoveryStartedAt || Date.now();
+    state.discoveryStartedAt = 0;
     progEl.style.width = '100%';
-    msgEl.textContent = `Discovery complete — ${disc.total} items found across ${disc.categories.length} categories`;
+    const durLabel = discoveryDurationLabel(disc);
+    const dur = durLabel !== '—' ? durLabel : formatDuration(Date.now() - discoveryStartedAt);
+    msgEl.textContent = `Discovery complete in ${dur} — ${disc.total} items across ${disc.categories.length} categories`;
     state.discovery = disc;
     state.currentDiscoveryId = discoveryId;
     state.currentDiscoveryTime = disc.discoveredAt || '';
@@ -5620,7 +5711,11 @@ function renderOverviewMini(d) {
   const largest = [...d.categories].sort((a, b) => b.items.length - a.items.length)[0];
   const lg = largest ? largest.items.length : 0;
   const lgName = largest ? escapeHtml(largest.name) : '—';
+  const dur = discoveryDurationLabel(d);
+  const at = d.discoveredAt ? new Date(d.discoveredAt).toLocaleString() : '—';
   el.innerHTML = `
+    <div class="overview-row"><span class="ov-label">Discovery time</span><span class="ov-val">${dur}</span></div>
+    <div class="overview-row"><span class="ov-label">Discovered at</span><span class="ov-val" style="font-size:13px">${escapeHtml(at)}</span></div>
     <div class="overview-row"><span class="ov-label">Total discovered</span><span class="ov-val">${d.total}</span></div>
     <div class="overview-row"><span class="ov-label">Categories</span><span class="ov-val">${d.categories.length}</span></div>
     <div class="overview-row"><span class="ov-label">Largest list</span><span class="ov-val" style="font-size:15px">${lg} <span style="color:var(--text2);font-weight:500">${lgName}</span></span></div>`;
@@ -5683,7 +5778,9 @@ function renderResultsCharts(res) {
   if (mini) {
     const cr = res.created != null ? res.created : 0;
     const up = res.updated != null ? res.updated : 0;
+    const totalDur = res.durationMs != null && res.durationMs > 0 ? formatDuration(res.durationMs) : '—';
     mini.innerHTML = `
+      <div class="overview-row"><span class="ov-label">Total time</span><span class="ov-val">${totalDur}</span></div>
       <div class="overview-row"><span class="ov-label">Succeeded</span><span class="ov-val" style="color:#34d399">${ok}</span></div>
       <div class="overview-row"><span class="ov-label">Created / updated</span><span class="ov-val" style="font-size:15px">${cr} / ${up}</span></div>
       <div class="overview-row"><span class="ov-label">Failed</span><span class="ov-val" style="color:#f87171">${fail}</span></div>`;
@@ -5691,13 +5788,20 @@ function renderResultsCharts(res) {
   if (ctx) {
     const ts = res && res.sourceDiscoveryTime ? res.sourceDiscoveryTime : state.currentDiscoveryTime;
     const did = res && res.sourceDiscoveryId ? res.sourceDiscoveryId : state.currentDiscoveryId;
+    const disc = state.discovery || {};
+    const discDur = discoveryDurationLabel(disc);
+    let html = '';
     if (ts) {
       const local = new Date(ts);
       const display = isNaN(local.getTime()) ? ts : local.toLocaleString();
-      ctx.innerHTML = `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val">${escapeHtml(display)}${did ? ` (run #${did})` : ''}</span></div>`;
+      html += `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val">${escapeHtml(display)}${did ? ` (run #${did})` : ''}</span></div>`;
     } else {
-      ctx.innerHTML = `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val" style="color:var(--text3)">not available</span></div>`;
+      html += `<div class="overview-row"><span class="ov-label">Discovery timestamp used</span><span class="ov-val" style="color:var(--text3)">not available</span></div>`;
     }
+    if (discDur !== '—') {
+      html += `<div class="overview-row"><span class="ov-label">Discovery duration</span><span class="ov-val">${discDur}</span></div>`;
+    }
+    ctx.innerHTML = html;
   }
 }
 
@@ -5717,7 +5821,9 @@ function renderDiscovery() {
 
   // Stats bar
   const statsBar = document.getElementById('statsBar');
+  const dur = discoveryDurationLabel(d);
   statsBar.innerHTML = `
+    <div class="stat-chip"><div class="stat-num">${dur}</div><div class="stat-label">Discovery Time</div></div>
     <div class="stat-chip"><div class="stat-num">${d.total}</div><div class="stat-label">Total Items</div></div>
     <div class="stat-chip"><div class="stat-num">${d.categories.length}</div><div class="stat-label">Categories</div></div>
     <div class="stat-chip"><div class="stat-num" id="statSelected">0</div><div class="stat-label">Selected</div></div>
@@ -5767,9 +5873,11 @@ function renderCategories() {
 
     visibleByParent[parent].forEach(({cat, filtered}) => {
       totalVisible += filtered.length;
+      const selectable = filtered.filter(migrationItemSelectable);
+      filtered.filter(i => !migrationItemSelectable(i)).forEach(i => state.selected.delete(`${cat.name}:${i.id}`));
 
-      const selectedInCat = filtered.filter(i => state.selected.has(`${cat.name}:${i.id}`)).length;
-      const allSelected = selectedInCat === filtered.length;
+      const selectedInCat = selectable.filter(i => state.selected.has(`${cat.name}:${i.id}`)).length;
+      const allSelected = selectable.length > 0 && selectedInCat === selectable.length;
 
       const group = document.createElement('div');
       group.className = 'category-group';
@@ -5778,8 +5886,8 @@ function renderCategories() {
       const header = document.createElement('div');
       header.className = 'category-header' + (selectedInCat > 0 ? ' has-selected' : '');
       header.innerHTML = `
-        <input type="checkbox" class="cat-check" id="catck-${cat.name}" ${allSelected && filtered.length ? 'checked' : ''} ${filtered.length&&selectedInCat&&!allSelected?'indeterminate':''}
-          onclick="toggleCategory(event, '${cat.name}', ${JSON.stringify(filtered.map(i=>i.id)).replace(/"/g,"'")})">
+        <input type="checkbox" class="cat-check" id="catck-${cat.name}" ${allSelected ? 'checked' : ''} ${selectable.length && selectedInCat && !allSelected ? 'indeterminate' : ''}
+          onclick="toggleCategory(event, '${cat.name}', ${JSON.stringify(selectable.map(i=>i.id)).replace(/"/g,"'")})" ${selectable.length ? '' : 'disabled'}>
         <span class="cat-icon">${catIcon(cat.name)}</span>
         <span class="cat-name">${cat.name}</span>
         ${selectedInCat ? `<span class="cat-selected-count">${selectedInCat} selected</span>` : ''}
@@ -5799,14 +5907,23 @@ function renderCategories() {
 
       filtered.forEach(item => {
         const displayName = discoveryDisplayName(item);
-        const checked = state.selected.has(`${cat.name}:${item.id}`);
+        const selectable = migrationItemSelectable(item);
+        const checked = selectable && state.selected.has(`${cat.name}:${item.id}`);
         const row = document.createElement('div');
-        row.className = 'item-row';
-        row.innerHTML = `
+        row.className = 'item-row' + (selectable ? '' : ' item-row-inventory');
+        row.innerHTML = selectable ? `
           <input type="checkbox" class="item-check" ${checked ? 'checked' : ''}
             onchange="toggleItem('${cat.name}', ${item.id}, this.checked)">
           <span class="item-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName || '<unnamed>')}</span>
-          ${item.subType ? `<span class="item-subtype">${item.subType}</span>` : ''}
+          ${item.subType ? `<span class="item-subtype">${escapeHtml(item.subType)}</span>` : ''}
+          <span class="item-id">#${item.id}</span>
+          <button type="button" class="btn-icon" title="View relations" style="margin-left:auto;font-size:12px;padding:2px 6px;"
+            onclick="event.stopPropagation(); openMigrationRelations('${cat.name.replace(/'/g, "\\'")}', ${item.id})">🕸</button>
+        ` : `
+          <span class="item-check-placeholder" aria-hidden="true"></span>
+          <span class="item-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName || '<unnamed>')}</span>
+          ${item.subType ? `<span class="item-subtype">${escapeHtml(item.subType)}</span>` : ''}
+          <span class="item-subtype" style="color:var(--text3)">inventory only</span>
           <span class="item-id">#${item.id}</span>
           <button type="button" class="btn-icon" title="View relations" style="margin-left:auto;font-size:12px;padding:2px 6px;"
             onclick="event.stopPropagation(); openMigrationRelations('${cat.name.replace(/'/g, "\\'")}', ${item.id})">🕸</button>
@@ -5865,7 +5982,13 @@ function selectAll() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   d.categories.forEach(cat => {
     if (state.activeFilter !== 'ALL' && cat.name !== state.activeFilter) return;
-    cat.items.filter(i => !search || i.name.toLowerCase().includes(search))
+    cat.items
+      .filter(migrationItemSelectable)
+      .filter(i => {
+        if (!search) return true;
+        const label = discoveryDisplayName(i);
+        return label.toLowerCase().includes(search) || (i.subType || '').toLowerCase().includes(search);
+      })
       .forEach(i => state.selected.add(`${cat.name}:${i.id}`));
   });
   renderCategories();
@@ -5909,6 +6032,10 @@ function normType(t) {
   if (x === 'workflow' || x === 'taskset') return 'workflow';
   if (x === 'input' || x === 'optiontype') return 'input';
   return x;
+}
+
+function migrationItemSelectable(item) {
+  return normType(item?.type) !== 'integration';
 }
 
 function parseItemRaw(item) {
@@ -6333,7 +6460,7 @@ async function startMigration() {
     const catData = d.categories.find(c => c.name === cat);
     if (!catData) return;
     const item = catData.items.find(i => i.id === id);
-    if (!item) return;
+    if (!item || !migrationItemSelectable(item)) return;
     items.push({
       category: cat,
       type: item.type,
@@ -6349,6 +6476,8 @@ async function startMigration() {
   document.getElementById('migrationDone').classList.add('hidden');
   resetMigrationProgressUI();
   state.migrationQueue = [];
+  state.migrationStartedAt = Date.now();
+  updateMigrationElapsedUI();
 
   const catalogCount = items.filter(i => normType(i.type) === 'catalogitem').length;
   const parallelHint = catalogCount > 1 ? ` · ${catalogCount} catalog items will migrate in parallel` : '';
@@ -6366,6 +6495,7 @@ async function startMigration() {
     }, updateMigrationProgressUI);
 
     state.allResults = res.results;
+    state.migrationDurationMs = res.durationMs || 0;
     document.getElementById('migrationProgress').style.width = '100%';
     if (state.migrationQueue && state.migrationQueue.length) {
       renderMigrationQueue(state.migrationQueue, -1, state.migrationQueue.length);
@@ -6381,6 +6511,8 @@ async function startMigration() {
     document.getElementById('resPartial').textContent = res.partial != null ? res.partial : 0;
     document.getElementById('resCreated').textContent = res.created != null ? res.created : 0;
     document.getElementById('resUpdated').textContent = res.updated != null ? res.updated : 0;
+    document.getElementById('resDuration').textContent =
+      res.durationMs != null && res.durationMs > 0 ? formatDuration(res.durationMs) : '—';
 
     renderResultsCharts(res);
     renderResultRows('all');
@@ -6400,10 +6532,11 @@ function renderResultRows(filter) {
     : rows.map(r => `
       <div class="result-row">
         <div class="result-icon ${r.status}">${icons[r.status]||'?'}</div>
-        <span class="result-name">${r.name}</span>
-        <span class="result-type">${r.type}</span>
-        ${r.outcome ? `<span class="result-outcome ${r.outcome}">${r.outcome}</span>` : ''}
-        ${r.message ? `<span class="result-msg">${r.message}</span>` : ''}
+        <span class="result-name">${escapeHtml(r.name)}</span>
+        <span class="result-type">${escapeHtml(r.type)}</span>
+        ${r.outcome ? `<span class="result-outcome ${r.outcome}">${escapeHtml(r.outcome)}</span>` : ''}
+        ${r.durationMs != null && r.durationMs > 0 ? `<span class="result-duration" title="Migration time">${formatDuration(r.durationMs)}</span>` : ''}
+        ${r.message ? `<span class="result-msg">${escapeHtml(r.message)}</span>` : ''}
       </div>`).join('');
 }
 
@@ -6427,6 +6560,7 @@ function exportResults() {
   const blob = new Blob([JSON.stringify({
     timestamp: new Date().toISOString(),
     source: state.srcUrl,
+    durationMs: state.migrationDurationMs || 0,
     results: state.allResults
   }, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -6625,12 +6759,13 @@ function renderDiscoveryHistoryRows() {
     const source = d.sourceUrl || d.sourceProfileId || 'n/a';
     const total = Number(d.totalItems || 0);
     const cats = Number(d.categories || 0);
+    const dur = d.durationMs > 0 ? formatDuration(d.durationMs) : '';
     const usedBy = Number(d.migrationRuns || 0);
     const danger = usedBy > 0;
     return `<tr>
       <td>${escapeHtml(when)}</td>
       <td style="font-weight:600;">${escapeHtml(appliance)}</td>
-      <td>${total} items / ${cats} categories</td>
+      <td>${total} items / ${cats} categories${dur ? ` · ${escapeHtml(dur)}` : ''}</td>
       <td style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(source)}">${escapeHtml(source)}</td>
       <td>${usedBy}</td>
       <td>
