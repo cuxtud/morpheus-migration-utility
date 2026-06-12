@@ -2,6 +2,44 @@
 
 Binaries and checksums are on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). The [Download](download.md) page links to the latest build.
 
+## v1.0.4
+
+**[Download v1.0.4](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.4)** · June 2026
+
+### Migration improvements
+
+- **Parallel dependency waves** — Items in the same dependency tier migrate concurrently (default 4 workers); catalog items still run in a parallel pass after serial waves.
+- **Discovery snapshot reuse** — Migration resolves clouds, instance types, forms, layouts, and workflows from the saved discovery snapshot before hitting the source API.
+- **Catalog migration** — Improved cloud/layout/form/workflow resolution; inline creation of missing forms and layouts; destination caches for faster lookups.
+- **System instance types** — Built-in system instance types are not migrated; catalogs using them resolve against destination built-ins only.
+- **Option lists** — Library option list migration support.
+- **Thread-safe automation state** — Fixes concurrent map writes during parallel form/catalog migration.
+
+### Discovery & UI
+
+- **Faster discovery** — Parallel list pagination and enrichment; configurable HTTP timeout (default 3 minutes).
+- **Discovery duration** — Elapsed time shown in discovery stats, overview, history, and fleet views.
+- **Form relations** — UI shows form links to library inputs and catalog items.
+- **Migration stream** — Resilient NDJSON parsing when the browser disconnects; server serializes heartbeat/progress writes.
+
+### Documentation
+
+- **Download counter** — GitHub release download count in the docs site footer.
+
+### Downloads (v1.0.4)
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `morpheus-snapshot-linux-amd64` |
+| Linux ARM64 | `morpheus-snapshot-linux-arm64` |
+| Windows x64 | `morpheus-snapshot-windows-amd64.exe` |
+| macOS Intel | `morpheus-snapshot-mac-intel` |
+| macOS Apple Silicon | `morpheus-snapshot-mac-apple-silicon` |
+
+Verify downloads with `checksums.txt` in the [release assets](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.4).
+
+---
+
 ## v1.0.3
 
 **[Download v1.0.3](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.3)** · June 2026

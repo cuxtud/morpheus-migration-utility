@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cuxtud/morpheus-migration-utility/internal/migrate"
@@ -232,6 +233,11 @@ func handleMigrate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "destination: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if req.DiscoveryID > 0 && profileRepo.SupportsJSONB() {
+		if rec, err := profileRepo.LoadMigrationDiscovery(req.DiscoveryID); err == nil && rec != nil && rec.Discovery != nil {
+			req.SourceDiscovery = rec.Discovery
+		}
+	}
 	if r.URL.Query().Get("stream") == "1" {
 		handleMigrateStream(w, r, &req)
 		return
@@ -250,8 +256,11 @@ func handleMigrateStream(w http.ResponseWriter, r *http.Request, req *migrate.Mi
 
 	flusher, canFlush := w.(http.Flusher)
 	enc := json.NewEncoder(w)
+	var writeMu sync.Mutex
 	clientGone := false
 	write := func(v any) bool {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		if clientGone {
 			return false
 		}

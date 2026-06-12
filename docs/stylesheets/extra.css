@@ -1,0 +1,16 @@
+/* Fine-print release download counter — footer left */
+.md-download-count {
+  margin: 0 0 0.35rem;
+  font-size: 0.64rem;
+  line-height: 1.4;
+  opacity: 0.65;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-download-count__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.md-download-count__label::before {
+  content: " ";
+}

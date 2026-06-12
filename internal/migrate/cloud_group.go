@@ -75,32 +75,9 @@ func migrateGroupWithClouds(src, dst *morpheus.Client, item SelectedItem) ItemRe
 		name = n
 	}
 
-	destID, err := findDestGroupIDByName(dst, name)
+	destID, err := ensureDestGroup(src, dst, name, obj)
 	if err != nil {
 		return ItemResult{Name: name, Type: "group", Status: "error", Message: err.Error()}
-	}
-
-	if destID == "" {
-		payload, err := buildGroupWritePayload(obj, nil)
-		if err != nil {
-			return ItemResult{Name: name, Type: "group", Status: "error", Message: err.Error()}
-		}
-		_, err = dst.PostRaw("/api/groups", payload)
-		if err != nil {
-			if isDuplicateErr(err) {
-				destID, findErr := findDestGroupIDByName(dst, name)
-				if findErr != nil || destID == "" {
-					return ItemResult{Name: name, Type: "group", Status: "error", Message: err.Error()}
-				}
-			} else {
-				return ItemResult{Name: name, Type: "group", Status: "error", Message: err.Error()}
-			}
-		} else {
-			destID, err = findDestGroupIDByName(dst, name)
-			if err != nil || destID == "" {
-				return ItemResult{Name: name, Type: "group", Status: "error", Message: "group created but could not resolve destination id"}
-			}
-		}
 	}
 
 	cloudNames := extractGroupCloudNames(obj)
@@ -160,15 +137,17 @@ func migrateCloudWithCredential(src, dst *morpheus.Client, item SelectedItem) It
 	groupName := primaryGroupNameFromCloud(obj)
 	destGroupID := ""
 	if groupName != "" {
-		destGroupID, err = findDestGroupIDByName(dst, groupName)
-		if err != nil {
-			return ItemResult{Name: name, Type: "cloud", Status: "error", Message: err.Error()}
+		srcGroup, loadErr := sourceGroupObjForCloud(src, obj, groupName)
+		if loadErr != nil {
+			return ItemResult{Name: name, Type: "cloud", Status: "blocked", Message: loadErr.Error()}
 		}
-		if destGroupID == "" {
-			return ItemResult{
-				Name: name, Type: "cloud", Status: "blocked",
-				Message: fmt.Sprintf("group %q must exist on destination before cloud %q — migrate the group first", groupName, name),
+		destGroupID, err = ensureDestGroup(src, dst, groupName, srcGroup)
+		if err != nil {
+			status := "error"
+			if strings.Contains(strings.ToLower(err.Error()), "source") {
+				status = "blocked"
 			}
+			return ItemResult{Name: name, Type: "cloud", Status: status, Message: err.Error()}
 		}
 	}
 
@@ -208,8 +187,12 @@ func migrateCloudWithCredential(src, dst *morpheus.Client, item SelectedItem) It
 	}
 	if len(groupNames) > 0 {
 		for _, gn := range groupNames {
-			gid, findErr := findDestGroupIDByName(dst, gn)
-			if findErr != nil || gid == "" {
+			srcGroup, loadErr := sourceGroupObjForCloud(src, obj, gn)
+			if loadErr != nil {
+				continue
+			}
+			gid, ensureErr := ensureDestGroup(src, dst, gn, srcGroup)
+			if ensureErr != nil || gid == "" {
 				continue
 			}
 			_ = associateGroupCloudsByName(dst, gid, []string{name})
@@ -401,23 +384,133 @@ func buildCloudWritePayload(zone map[string]interface{}, destCredID int64, destG
 	} {
 		delete(clone, k)
 	}
-	if zt, ok := clone["zoneType"].(map[string]interface{}); ok && zt != nil {
-		code := strings.TrimSpace(stringFromAny(zt["code"]))
-		if code == "" {
-			code = strings.TrimSpace(stringFromAny(zt["name"]))
-		}
-		if code != "" {
-			clone["zoneType"] = map[string]interface{}{"code": code}
-		}
+	code := cloudZoneTypeCode(clone)
+	if code != "" {
+		clone["zoneType"] = map[string]interface{}{"code": code}
 	}
 	if destCredID > 0 {
 		clone["credential"] = map[string]interface{}{"id": destCredID}
 		delete(clone, "accountCredential")
 	}
 	if destGroupID != "" {
-		clone["groupId"] = destGroupID
+		if gid := intFromAny(destGroupID); gid > 0 {
+			clone["groupId"] = gid
+		} else {
+			clone["groupId"] = destGroupID
+		}
 	}
+	stripCloudZoneWriteFields(clone)
+	normalizeCloudZoneForWrite(clone, code)
 	return json.Marshal(map[string]interface{}{"zone": clone})
+}
+
+// stripCloudZoneWriteFields removes read-only or appliance-specific zone fields Morpheus rejects on POST.
+func stripCloudZoneWriteFields(clone map[string]interface{}) {
+	for _, key := range []string{
+		"networkDomain", "domain", "accountDomain", "domainName",
+		"zoneTypeId", "networkDomainId",
+	} {
+		delete(clone, key)
+	}
+	if zt, ok := clone["zoneType"].(map[string]interface{}); ok && zt != nil {
+		delete(zt, "id")
+	}
+	cfg, ok := clone["config"].(map[string]interface{})
+	if !ok || cfg == nil {
+		return
+	}
+	for _, key := range []string{
+		"domain", "networkDomain", "networkDomainId", "domainId", "domainName",
+		"defaultDomain", "defaultDomainId", "zoneTypeId",
+	} {
+		delete(cfg, key)
+	}
+}
+
+func cloudZoneTypeCode(zone map[string]interface{}) string {
+	if zt, ok := zone["zoneType"].(map[string]interface{}); ok && zt != nil {
+		if code := strings.TrimSpace(stringFromAny(zt["code"])); code != "" {
+			return strings.ToLower(code)
+		}
+		if name := strings.TrimSpace(stringFromAny(zt["name"])); name != "" {
+			return strings.ToLower(name)
+		}
+	}
+	return ""
+}
+
+// normalizeCloudZoneForWrite shapes zone payloads the way Morpheus expects on POST /api/zones
+// (aligned with legacy VMware cloud migration scripts: on/off toggles, vmware config defaults).
+func normalizeCloudZoneForWrite(clone map[string]interface{}, zoneTypeCode string) {
+	clone["enabled"] = morpheusOnOffString(clone["enabled"], true)
+	clone["autoRecoverPowerState"] = morpheusOnOffString(clone["autoRecoverPowerState"], false)
+
+	cfg, ok := clone["config"].(map[string]interface{})
+	if !ok || cfg == nil {
+		cfg = map[string]interface{}{}
+		clone["config"] = cfg
+	}
+	for _, key := range []string{"hideHostSelection", "enableVnc", "importExisting", "enableStorageTypeSelection"} {
+		if _, exists := cfg[key]; exists {
+			defaultOn := key == "enableStorageTypeSelection"
+			cfg[key] = morpheusOnOffString(cfg[key], defaultOn)
+		}
+	}
+
+	if zoneTypeCode == "vmware" {
+		if strings.TrimSpace(stringFromAny(cfg["certificateProvider"])) == "" {
+			cfg["certificateProvider"] = "internal"
+		}
+		if _, exists := cfg["enableStorageTypeSelection"]; !exists {
+			cfg["enableStorageTypeSelection"] = "on"
+		}
+		if _, exists := cfg["importExisting"]; !exists {
+			cfg["importExisting"] = "off"
+		}
+		if strings.TrimSpace(stringFromAny(cfg["resourcePoolId"])) == "" {
+			cfg["resourcePoolId"] = "All"
+		}
+	}
+}
+
+func morpheusOnOffString(v interface{}, defaultOn bool) string {
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return "on"
+		}
+		return "off"
+	case string:
+		s := strings.ToLower(strings.TrimSpace(t))
+		switch s {
+		case "on", "true", "yes", "1":
+			return "on"
+		case "off", "false", "no", "0", "":
+			return "off"
+		default:
+			return s
+		}
+	case float64:
+		if t != 0 {
+			return "on"
+		}
+		return "off"
+	case int:
+		if t != 0 {
+			return "on"
+		}
+		return "off"
+	case int64:
+		if t != 0 {
+			return "on"
+		}
+		return "off"
+	default:
+		if defaultOn {
+			return "on"
+		}
+		return "off"
+	}
 }
 
 func findDestCredentialIDByName(dst *morpheus.Client, name string) (int64, error) {
@@ -439,6 +532,106 @@ func findDestCredentialIDByName(dst *morpheus.Client, name string) (int64, error
 		}
 	}
 	return 0, nil
+}
+
+func findSourceGroupIDByName(src *morpheus.Client, name string) (int64, error) {
+	want := strings.ToLower(strings.TrimSpace(name))
+	if want == "" {
+		return 0, nil
+	}
+	raws, err := paginateList(src, "/api/groups", "groups")
+	if err != nil {
+		return 0, err
+	}
+	for _, raw := range raws {
+		var row map[string]interface{}
+		if json.Unmarshal(raw, &row) != nil {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == want {
+			return intFromAny(row["id"]), nil
+		}
+	}
+	return 0, nil
+}
+
+func sourceGroupObjForCloud(src *morpheus.Client, cloud map[string]interface{}, groupName string) (map[string]interface{}, error) {
+	if src == nil {
+		return nil, fmt.Errorf("source appliance is required to load group %q", groupName)
+	}
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return nil, fmt.Errorf("empty group name")
+	}
+	if cloud != nil {
+		if arr, ok := cloud["groups"].([]interface{}); ok {
+			for _, e := range arr {
+				gm, ok := e.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if !strings.EqualFold(strings.TrimSpace(stringFromAny(gm["name"])), groupName) {
+					continue
+				}
+				if id := intFromAny(gm["id"]); id > 0 {
+					return fetchFullGroup(src, id)
+				}
+			}
+		}
+	}
+	srcID, err := findSourceGroupIDByName(src, groupName)
+	if err != nil {
+		return nil, err
+	}
+	if srcID <= 0 {
+		return nil, fmt.Errorf("group %q not found on source", groupName)
+	}
+	return fetchFullGroup(src, srcID)
+}
+
+func ensureDestGroup(src, dst *morpheus.Client, groupName string, sourceGroup map[string]interface{}) (string, error) {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return "", nil
+	}
+	destID, err := findDestGroupIDByName(dst, groupName)
+	if err != nil {
+		return "", err
+	}
+	if destID != "" {
+		return destID, nil
+	}
+	groupObj := sourceGroup
+	if groupObj == nil {
+		groupObj, err = sourceGroupObjForCloud(src, nil, groupName)
+		if err != nil {
+			return "", err
+		}
+	}
+	return createGroupOnDestination(dst, groupObj)
+}
+
+func createGroupOnDestination(dst *morpheus.Client, groupObj map[string]interface{}) (string, error) {
+	name := strings.TrimSpace(stringFromAny(groupObj["name"]))
+	if name == "" {
+		return "", fmt.Errorf("group payload has empty name")
+	}
+	payload, err := buildGroupWritePayload(groupObj, nil)
+	if err != nil {
+		return "", err
+	}
+	_, err = dst.PostRaw("/api/groups", payload)
+	if err != nil && !isDuplicateErr(err) {
+		return "", err
+	}
+	destID, err := findDestGroupIDByName(dst, name)
+	if err != nil {
+		return "", err
+	}
+	if destID == "" {
+		return "", fmt.Errorf("group %q created but could not resolve destination id", name)
+	}
+	return destID, nil
 }
 
 func ensureDestCredentialForCloud(src, dst *morpheus.Client, srcCredID int64, srcCredName string) (int64, error) {

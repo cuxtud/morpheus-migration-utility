@@ -24,6 +24,7 @@ type MigrationDiscoveryListItem struct {
 	SourceProfileID string `json:"sourceProfileId,omitempty"`
 	TotalItems      int    `json:"totalItems"`
 	Categories      int    `json:"categories"`
+	DurationMs      int64  `json:"durationMs,omitempty"`
 	MigrationRuns   int    `json:"migrationRuns"`
 }
 

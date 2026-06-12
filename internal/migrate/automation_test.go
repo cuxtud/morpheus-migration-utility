@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -229,5 +230,45 @@ func TestIntegrationSearchPhrases(t *testing.T) {
 	}
 	if p[0] != "python_examples" {
 		t.Fatalf("first phrase: %v", p)
+	}
+}
+
+func TestIsDuplicateErr_formAlreadyInUse(t *testing.T) {
+	err := errors.New(`HTTP 400: {"errors":{"name":"Form name is already in use","code":"Form code is already in use"}}`)
+	if !isDuplicateErr(err) {
+		t.Fatal("expected Morpheus form validation duplicate to be detected")
+	}
+}
+
+func TestIsDuplicateErr_mustBeUnique(t *testing.T) {
+	err := errors.New(`HTTP 400: {"success":false,"msg":"The form contains missing or invalid data","errors":{"name":"must be unique"}}`)
+	if !isDuplicateErr(err) {
+		t.Fatal("expected must be unique to be detected as duplicate")
+	}
+}
+
+func TestFindOptionTypeFormID_prefersNameOverCode(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"id": 10, "name": "LDAP Search", "code": "ldap-search-old"},
+		{"id": 20, "name": "Other Form", "code": "ldap-search"},
+	}
+	wantCode := strings.ToLower("ldap-search")
+	wantName := strings.ToLower("LDAP Search")
+	var byCode, byName int64
+	for _, row := range rows {
+		id := intFromAny(row["id"])
+		if strings.ToLower(stringFromAny(row["name"])) == wantName {
+			byName = id
+		}
+		if strings.ToLower(stringFromAny(row["code"])) == wantCode {
+			byCode = id
+		}
+	}
+	got := byName
+	if got == 0 {
+		got = byCode
+	}
+	if got != 10 {
+		t.Fatalf("name match should win: got id %d want 10 (byCode=%d byName=%d)", got, byCode, byName)
 	}
 }

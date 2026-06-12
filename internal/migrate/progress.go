@@ -4,12 +4,13 @@ import "fmt"
 
 // ProgressEvent is emitted during migration for live UI updates.
 type ProgressEvent struct {
-	Phase   string   `json:"phase"` // preparing, queue, step, item_done
-	Message string   `json:"message,omitempty"`
-	Index   int      `json:"index,omitempty"`
-	Total   int      `json:"total,omitempty"`
-	Queue   []string `json:"queue,omitempty"`
-	Status  string   `json:"status,omitempty"`
+	Phase      string   `json:"phase"` // preparing, queue, step, item_done
+	Message    string   `json:"message,omitempty"`
+	Index      int      `json:"index,omitempty"`
+	Total      int      `json:"total,omitempty"`
+	Queue      []string `json:"queue,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	DurationMs int64    `json:"durationMs,omitempty"`
 }
 
 // ProgressFunc receives migration progress updates.

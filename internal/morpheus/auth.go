@@ -1,14 +1,12 @@
 package morpheus
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 const defaultOAuthClientID = "morph-api"
@@ -41,10 +39,7 @@ func LoginWithPassword(baseURL, username, password string, skipTLS bool) (string
 	body.Set("username", username)
 	body.Set("password", password)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLS},
-	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	client := &http.Client{Timeout: httpClientTimeout(), Transport: newHTTPTransport(skipTLS)}
 
 	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(body.Encode()))
 	if err != nil {

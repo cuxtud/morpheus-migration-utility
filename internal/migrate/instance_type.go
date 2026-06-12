@@ -8,8 +8,53 @@ import (
 	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
+func isSystemInstanceTypeItem(item SelectedItem) bool {
+	raw := strings.TrimSpace(item.RawJSON)
+	if raw == "" {
+		return false
+	}
+	return morpheus.IsSeededSystemLibraryItem(json.RawMessage(raw))
+}
+
+func isSystemInstanceTypeObject(obj map[string]interface{}) bool {
+	if obj == nil {
+		return false
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return false
+	}
+	return morpheus.IsSeededSystemLibraryItem(b)
+}
+
+func catalogInstanceTypeIsSystem(src *morpheus.Client, state *automationState, code string) bool {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return false
+	}
+	if state != nil && state.sourceSnap != nil {
+		if it, ok := state.sourceSnap.FindInstanceTypeByCode(code); ok {
+			return isSystemInstanceTypeItem(it)
+		}
+	}
+	if src == nil {
+		return false
+	}
+	it, err := findSourceInstanceTypeByCodeLive(src, code)
+	if err != nil {
+		return false
+	}
+	return isSystemInstanceTypeItem(it)
+}
+
 func migrateInstanceTypeWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
 	name := strings.TrimSpace(item.Name)
+	if isSystemInstanceTypeItem(item) {
+		return ItemResult{
+			Name: name, Type: "instanceType", Status: "skipped",
+			Message: "System instance types are built-in and cannot be migrated",
+		}
+	}
 	if src == nil {
 		return ItemResult{
 			Name: name, Type: "instanceType", Status: "error",
@@ -17,7 +62,13 @@ func migrateInstanceTypeWithAutomation(src, dst *morpheus.Client, item SelectedI
 		}
 	}
 
-	itObj, err := fetchFullInstanceType(src, item.ID)
+	var itObj map[string]interface{}
+	var err error
+	if state != nil && state.sourceSnap != nil {
+		itObj, err = state.sourceSnap.InstanceTypeObject(src, item)
+	} else {
+		itObj, err = fetchFullInstanceType(src, item.ID)
+	}
 	if err != nil {
 		return ItemResult{
 			Name: name, Type: "instanceType", Status: "error",
@@ -26,6 +77,12 @@ func migrateInstanceTypeWithAutomation(src, dst *morpheus.Client, item SelectedI
 	}
 	if n := strings.TrimSpace(stringFromAny(itObj["name"])); n != "" {
 		name = n
+	}
+	if isSystemInstanceTypeObject(itObj) {
+		return ItemResult{
+			Name: name, Type: "instanceType", Status: "skipped",
+			Message: "System instance types are built-in and cannot be migrated",
+		}
 	}
 	code := strings.TrimSpace(stringFromAny(itObj["code"]))
 	if code == "" {
@@ -367,7 +424,7 @@ func ensureOptionTypeIDs(src, dst *morpheus.Client, opt interface{}, state *auto
 			continue
 		}
 		state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", code))
-		if state.destOptionCodeToID[code] > 0 {
+		if state.destOptionTypeID(code) > 0 {
 			continue
 		}
 		state.reportStep(fmt.Sprintf("Creating input %q on destination", code))
@@ -378,10 +435,10 @@ func ensureOptionTypeIDs(src, dst *morpheus.Client, opt interface{}, state *auto
 				Message: fmt.Sprintf("could not create input %q on destination: %v", code, err),
 			}
 		}
-		state.destOptionCodeToID[code] = id
+		state.setDestOptionTypeID(code, id)
 	}
 	state.reloadDestOptionTypes(dst)
-	ids, warn := mapWorkflowOptionTypes(opt, state.destOptionCodeToID)
+	ids, warn := mapWorkflowOptionTypes(opt, state.destOptionTypeMapCopy())
 	return ids, warn, nil
 }
 
@@ -393,11 +450,8 @@ func ensureWorkflowFromRef(src, dst *morpheus.Client, ref map[string]interface{}
 		return 0, &ItemResult{Status: "error", Message: fmt.Sprintf("list destination workflows: %v", err)}
 	}
 	if wfName != "" {
-		for key, id := range state.destWorkflowKeyToID {
-			parts := strings.SplitN(key, "\x00", 2)
-			if len(parts) > 0 && parts[0] == wfName {
-				return id, nil
-			}
+		if id := state.destWorkflowIDByName(wfName); id > 0 {
+			return id, nil
 		}
 	}
 
@@ -408,7 +462,13 @@ func ensureWorkflowFromRef(src, dst *morpheus.Client, ref map[string]interface{}
 		}
 	}
 
-	dep, err := fetchSourceByID(src, "workflow", wfID)
+	var dep SelectedItem
+	var err error
+	if state != nil && state.sourceSnap != nil {
+		dep, err = state.sourceSnap.ResolveSourceItem(src, "workflow", wfID)
+	} else {
+		dep, err = fetchSourceByIDLive(src, "workflow", wfID)
+	}
 	if err != nil {
 		return 0, &ItemResult{Status: "blocked", Message: fmt.Sprintf("workflow %q: %v", wfName, err)}
 	}
@@ -420,11 +480,8 @@ func ensureWorkflowFromRef(src, dst *morpheus.Client, ref map[string]interface{}
 		return 0, &ItemResult{Status: "error", Message: err.Error()}
 	}
 	if wfName != "" {
-		for key, id := range state.destWorkflowKeyToID {
-			parts := strings.SplitN(key, "\x00", 2)
-			if len(parts) > 0 && parts[0] == wfName {
-				return id, nil
-			}
+		if id := state.destWorkflowIDByName(wfName); id > 0 {
+			return id, nil
 		}
 	}
 	return 0, &ItemResult{Status: "blocked", Message: fmt.Sprintf("workflow %q migrated but not found on destination", wfName)}

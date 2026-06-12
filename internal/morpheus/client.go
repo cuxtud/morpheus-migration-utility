@@ -10,8 +10,11 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+const defaultHTTPTimeout = 3 * time.Minute
 
 type Client struct {
 	BaseURL    string
@@ -50,21 +53,49 @@ func (c *Client) logHTTPDebug(method, path string, payload []byte) {
 	fmt.Fprint(os.Stderr, msg)
 }
 
-func NewClient(baseURL, token string, skipTLS bool) *Client {
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLS},
+func httpClientTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv("MORPHEUS_SNAPSHOT_HTTP_TIMEOUT"))
+	if v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
 	}
+	return defaultHTTPTimeout
+}
+
+func newHTTPTransport(skipTLS bool) *http.Transport {
+	return &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: skipTLS},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 32,
+		IdleConnTimeout:     90 * time.Second,
+	}
+}
+
+func NewClient(baseURL, token string, skipTLS bool) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Token:   token,
 		httpClient: &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
+			Timeout:   httpClientTimeout(),
+			Transport: newHTTPTransport(skipTLS),
 		},
 	}
 }
 
-func (c *Client) get(path string) ([]byte, error) {
+func isRetryableGetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "timeout") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "eof")
+}
+
+func (c *Client) getOnce(path string) ([]byte, error) {
 	c.logHTTPDebug(http.MethodGet, path, nil)
 	req, err := http.NewRequest("GET", c.BaseURL+path, nil)
 	if err != nil {
@@ -87,6 +118,23 @@ func (c *Client) get(path string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
+}
+
+func (c *Client) get(path string) ([]byte, error) {
+	const attempts = 2
+	var last error
+	for i := 0; i < attempts; i++ {
+		body, err := c.getOnce(path)
+		if err == nil {
+			return body, nil
+		}
+		last = err
+		if i == attempts-1 || !isRetryableGetErr(err) {
+			return nil, err
+		}
+		time.Sleep(time.Duration(i+1) * time.Second)
+	}
+	return nil, last
 }
 
 func (c *Client) post(path string, payload []byte) ([]byte, error) {
@@ -189,6 +237,7 @@ type DiscoveryResult struct {
 	Total        int             `json:"total"`
 	Errors       []string        `json:"errors"`
 	DiscoveredAt string          `json:"discoveredAt,omitempty"`
+	DurationMs   int64           `json:"durationMs,omitempty"`
 }
 
 type CategoryGroup struct {
@@ -200,9 +249,16 @@ type CategoryGroup struct {
 
 // paginate fetches all pages of a list endpoint
 func (c *Client) paginate(basePath string, dataKey string) ([]json.RawMessage, error) {
+	return c.paginateWithPageSize(basePath, dataKey, 50)
+}
+
+func (c *Client) paginateWithPageSize(basePath, dataKey string, pageSize int) ([]json.RawMessage, error) {
+	if pageSize <= 0 {
+		pageSize = 50
+	}
 	var all []json.RawMessage
 	offset := 0
-	max := 50
+	max := pageSize
 	for {
 		path := fmt.Sprintf("%s?max=%d&offset=%d", basePath, max, offset)
 		body, err := c.get(path)
@@ -317,9 +373,9 @@ func hasNonNullObjectField(raw json.RawMessage, field string) bool {
 	return json.Unmarshal(val, &nested) == nil && len(nested) > 0
 }
 
-// isSeededSystemLibraryItem checks common Morpheus flags used by built-in seeded library records.
+// IsSeededSystemLibraryItem checks common Morpheus flags used by built-in seeded library records.
 // We only use this for migration-sensitive categories (instance types, layouts, node types).
-func isSeededSystemLibraryItem(raw json.RawMessage) bool {
+func IsSeededSystemLibraryItem(raw json.RawMessage) bool {
 	// Strong signal from Morpheus library payloads:
 	// seeded/system records typically have account: null
 	// user-created records have account object (e.g. Master tenant).
@@ -353,23 +409,180 @@ func isSeededSystemLibraryItem(raw json.RawMessage) bool {
 	return false
 }
 
+func (c *Client) discoverCategoryItems(f discoveryFetcher, dc *discoveryConcurrency) ([]DiscoveryItem, string) {
+	rawItems, err := c.paginateDiscoveryList(f.endpoint, f.dataKey, discoveryListPageSize)
+	if err != nil {
+		return nil, fmt.Sprintf("%s: %v", f.category, err)
+	}
+	enriched := c.parallelEnrichDiscoveryItems(rawItems, f.dataKey, dc)
+
+	seen := map[int64]struct{}{}
+	items := make([]DiscoveryItem, 0, len(enriched))
+	for _, itemRaw := range enriched {
+		id := extractInt64Field(itemRaw, "id")
+
+		if f.typeHint == "instanceType" || f.typeHint == "layout" || f.typeHint == "nodeType" {
+			if IsSeededSystemLibraryItem(itemRaw) {
+				continue
+			}
+		}
+
+		if id > 0 {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+
+		name := discoveryItemName(itemRaw, f.typeHint)
+		desc := extractStringField(itemRaw, "description")
+		subType := discoverySubType(itemRaw, f.subField)
+
+		items = append(items, DiscoveryItem{
+			ID:          id,
+			Name:        name,
+			Type:        f.typeHint,
+			Description: desc,
+			Category:    f.category,
+			SubType:     subType,
+			RawJSON:     string(itemRaw),
+		})
+	}
+	return items, ""
+}
+
+func discoverySubType(itemRaw json.RawMessage, subField string) string {
+	if subField == "" {
+		return ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(itemRaw, &obj) != nil {
+		return ""
+	}
+	nested, ok := obj[subField]
+	if !ok {
+		return ""
+	}
+	subType := extractStringField(nested, "name")
+	if subType == "" {
+		_ = json.Unmarshal(nested, &subType)
+	}
+	return subType
+}
+
+func (c *Client) parallelEnrichDiscoveryItems(rawItems []json.RawMessage, dataKey string, dc *discoveryConcurrency) []json.RawMessage {
+	if !discoveryItemNeedsEnrich(dataKey) || len(rawItems) == 0 {
+		return rawItems
+	}
+	out := make([]json.RawMessage, len(rawItems))
+	sem := make(chan struct{}, discoveryEnrichParallelism)
+	var wg sync.WaitGroup
+	for i, raw := range rawItems {
+		wg.Add(1)
+		go func(i int, raw json.RawMessage) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if dc != nil && dc.enrichSem != nil {
+				dc.enrichSem <- struct{}{}
+				defer func() { <-dc.enrichSem }()
+			}
+			id := extractInt64Field(raw, "id")
+			out[i] = c.enrichDiscoveryItemRaw(raw, dataKey, id)
+		}(i, raw)
+	}
+	wg.Wait()
+	return out
+}
+
+func discoveryItemNeedsEnrich(dataKey string) bool {
+	switch dataKey {
+	case "taskSets", "catalogItemTypes", "containerTypes", "instanceTypes", "optionTypeForms":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) enrichDiscoveryItemRaw(itemRaw json.RawMessage, dataKey string, id int64) json.RawMessage {
+	if id <= 0 {
+		return itemRaw
+	}
+	switch dataKey {
+	case "taskSets":
+		if body, err := c.get(fmt.Sprintf("/api/task-sets/%d", id)); err == nil {
+			var w map[string]json.RawMessage
+			if json.Unmarshal(body, &w) == nil {
+				if ts, ok := w["taskSet"]; ok {
+					return ts
+				}
+			}
+		}
+	case "catalogItemTypes":
+		if body, err := c.get(fmt.Sprintf("/api/catalog-item-types/%d", id)); err == nil {
+			var w map[string]json.RawMessage
+			if json.Unmarshal(body, &w) == nil {
+				if cit, ok := w["catalogItemType"]; ok {
+					return cit
+				}
+			}
+		}
+	case "containerTypes":
+		if body, err := c.get(fmt.Sprintf("/api/library/container-types/%d", id)); err == nil {
+			var w map[string]json.RawMessage
+			if json.Unmarshal(body, &w) == nil {
+				if ct, ok := w["containerType"]; ok {
+					return ct
+				}
+			}
+		}
+	case "instanceTypes":
+		for _, path := range []string{
+			fmt.Sprintf("/api/library/instance-types/%d", id),
+			fmt.Sprintf("/api/instance-types/%d", id),
+		} {
+			if body, err := c.get(path); err == nil {
+				var w map[string]json.RawMessage
+				if json.Unmarshal(body, &w) == nil {
+					if it, ok := w["instanceType"]; ok {
+						return it
+					}
+				}
+			}
+		}
+	case "optionTypeForms":
+		if body, err := c.get(fmt.Sprintf("/api/library/option-type-forms/%d", id)); err == nil {
+			var w map[string]json.RawMessage
+			if json.Unmarshal(body, &w) == nil {
+				if tf, ok := w["optionTypeForm"]; ok {
+					return tf
+				}
+			}
+		}
+	}
+	return itemRaw
+}
+
+type discoveryFetcher struct {
+	category   string
+	icon       string
+	endpoint   string
+	dataKey    string
+	typeHint   string
+	subField   string
+	parentPath string
+}
+
 func (c *Client) Discover() *DiscoveryResult {
+	started := time.Now()
 	result := &DiscoveryResult{
-		DiscoveredAt: time.Now().UTC().Format(time.RFC3339),
+		DiscoveredAt: started.UTC().Format(time.RFC3339),
 	}
+	defer func() {
+		result.DurationMs = time.Since(started).Milliseconds()
+	}()
 
-	type fetcher struct {
-		category string
-		icon     string
-		endpoint string
-		dataKey  string
-		typeHint string
-		subField string // optional nested field for sub-type
-		// parent path for UI grouping (supports multiple levels)
-		parentPath string
-	}
-
-	fetchers := []fetcher{
+	fetchers := []discoveryFetcher{
 		// Infrastructure / Clouds (Morpheus API uses /api/zones; /api/clouds is not on all versions)
 		{category: "Clouds", icon: "cloud", endpoint: "/api/zones", dataKey: "zones", typeHint: "cloud", subField: "zoneType"},
 
@@ -405,130 +618,41 @@ func (c *Client) Discover() *DiscoveryResult {
 		{category: "Cypher", icon: "lock", endpoint: "/api/cypher", dataKey: "cyphers", typeHint: "cypher"},
 	}
 
-	// Deduplicate categories
-	categoryMap := map[string]*CategoryGroup{}
-	categorySeenIDs := map[string]map[int64]struct{}{}
-
+	type categoryWork struct {
+		f     discoveryFetcher
+		items []DiscoveryItem
+		err   string
+	}
+	dc := newDiscoveryConcurrency()
+	workCh := make(chan categoryWork, len(fetchers))
+	var listWG sync.WaitGroup
 	for _, f := range fetchers {
-		items, err := c.paginate(f.endpoint, f.dataKey)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f.category, err))
+		listWG.Add(1)
+		go func(f discoveryFetcher) {
+			defer listWG.Done()
+			items, errMsg := c.discoverCategoryItems(f, dc)
+			workCh <- categoryWork{f: f, items: items, err: errMsg}
+		}(f)
+	}
+	listWG.Wait()
+	close(workCh)
+
+	categoryMap := map[string]*CategoryGroup{}
+	for cw := range workCh {
+		if cw.err != "" {
+			result.Errors = append(result.Errors, cw.err)
 			continue
 		}
-
-		grp, exists := categoryMap[f.category]
+		if len(cw.items) == 0 {
+			continue
+		}
+		grp, exists := categoryMap[cw.f.category]
 		if !exists {
-			grp = &CategoryGroup{Name: f.category, Icon: f.icon, ParentPath: f.parentPath}
-			categoryMap[f.category] = grp
+			grp = &CategoryGroup{Name: cw.f.category, Icon: cw.f.icon, ParentPath: cw.f.parentPath}
+			categoryMap[cw.f.category] = grp
 		}
-		if _, ok := categorySeenIDs[f.category]; !ok {
-			categorySeenIDs[f.category] = map[int64]struct{}{}
-		}
-
-		for _, raw := range items {
-			id := extractInt64Field(raw, "id")
-			itemRaw := raw
-			// List task-sets are often shallow; fetch full task set for migration (taskSetTasks, optionTypes).
-			if f.dataKey == "taskSets" && id > 0 {
-				if body, err := c.get(fmt.Sprintf("/api/task-sets/%d", id)); err == nil {
-					var w map[string]json.RawMessage
-					if json.Unmarshal(body, &w) == nil {
-						if ts, ok := w["taskSet"]; ok {
-							itemRaw = ts
-						}
-					}
-				}
-			}
-			// List catalog items are shallow; fetch full record (config, optionTypes, instanceSpec).
-			if f.dataKey == "catalogItemTypes" && id > 0 {
-				if body, err := c.get(fmt.Sprintf("/api/catalog-item-types/%d", id)); err == nil {
-					var w map[string]json.RawMessage
-					if json.Unmarshal(body, &w) == nil {
-						if cit, ok := w["catalogItemType"]; ok {
-							itemRaw = cit
-						}
-					}
-				}
-			}
-			// List container types are shallow; fetch full record (virtualImage, etc.).
-			if f.dataKey == "containerTypes" && id > 0 {
-				if body, err := c.get(fmt.Sprintf("/api/library/container-types/%d", id)); err == nil {
-					var w map[string]json.RawMessage
-					if json.Unmarshal(body, &w) == nil {
-						if ct, ok := w["containerType"]; ok {
-							itemRaw = ct
-						}
-					}
-				}
-			}
-			// List instance types are shallow; fetch full record (layouts, inputs, node types).
-			if f.dataKey == "instanceTypes" && id > 0 {
-				for _, path := range []string{
-					fmt.Sprintf("/api/library/instance-types/%d", id),
-					fmt.Sprintf("/api/instance-types/%d", id),
-				} {
-					if body, err := c.get(path); err == nil {
-						var w map[string]json.RawMessage
-						if json.Unmarshal(body, &w) == nil {
-							if it, ok := w["instanceType"]; ok {
-								itemRaw = it
-								break
-							}
-						}
-					}
-				}
-			}
-			// List forms are shallow; fetch full option-type-form (options + fieldGroups + cross-field config refs).
-			if f.dataKey == "optionTypeForms" && id > 0 {
-				if body, err := c.get(fmt.Sprintf("/api/library/option-type-forms/%d", id)); err == nil {
-					var w map[string]json.RawMessage
-					if json.Unmarshal(body, &w) == nil {
-						if tf, ok := w["optionTypeForm"]; ok {
-							itemRaw = tf
-						}
-					}
-				}
-			}
-			name := discoveryItemName(itemRaw, f.typeHint)
-			desc := extractStringField(itemRaw, "description")
-			subType := ""
-			if f.subField != "" {
-				// subField might be nested object with "name"
-				var obj map[string]json.RawMessage
-				json.Unmarshal(itemRaw, &obj)
-				if nested, ok := obj[f.subField]; ok {
-					subType = extractStringField(nested, "name")
-					if subType == "" {
-						json.Unmarshal(nested, &subType)
-					}
-				}
-			}
-
-			// Ignore seeded/system records for migration in these categories.
-			if f.typeHint == "instanceType" || f.typeHint == "layout" || f.typeHint == "nodeType" {
-				if isSeededSystemLibraryItem(itemRaw) {
-					continue
-				}
-			}
-
-			if id > 0 {
-				if _, seen := categorySeenIDs[f.category][id]; seen {
-					continue
-				}
-				categorySeenIDs[f.category][id] = struct{}{}
-			}
-
-			grp.Items = append(grp.Items, DiscoveryItem{
-				ID:          id,
-				Name:        name,
-				Type:        f.typeHint,
-				Description: desc,
-				Category:    f.category,
-				SubType:     subType,
-				RawJSON:     string(itemRaw),
-			})
-			result.Total++
-		}
+		grp.Items = append(grp.Items, cw.items...)
+		result.Total += len(cw.items)
 	}
 
 	var categoryNames []string

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
@@ -22,6 +23,10 @@ type MigrateRequest struct {
 	// ParallelCatalog controls concurrent catalog item migration after dependencies complete.
 	// 0 = auto (up to 4 workers when multiple catalog items), 1 = sequential, N = worker count.
 	ParallelCatalog int `json:"parallelCatalog,omitempty"`
+	// ParallelWorkers controls concurrent items within the same dependency wave (0 = default 4).
+	ParallelWorkers int `json:"parallelWorkers,omitempty"`
+	// SourceDiscovery is populated server-side from discoveryId (not sent by browser).
+	SourceDiscovery *morpheus.DiscoveryResult `json:"-"`
 }
 
 type ApplInfo struct {
@@ -69,6 +74,7 @@ type MigrateResult struct {
 	Failed              int          `json:"failed"`
 	Blocked             int          `json:"blocked"`
 	Partial             int          `json:"partial"`
+	DurationMs          int64        `json:"durationMs,omitempty"`
 	SourceDiscoveryID   int64        `json:"sourceDiscoveryId,omitempty"`
 	SourceDiscoveryTime string       `json:"sourceDiscoveryTime,omitempty"`
 }
@@ -78,8 +84,9 @@ type ItemResult struct {
 	Type   string `json:"type"`
 	Status string `json:"status"` // "success", "skipped", "error", "blocked", "partial"
 	// Outcome classifies successful writes: "created" (new resource) or "updated" (synced existing).
-	Outcome string `json:"outcome,omitempty"`
-	Message string `json:"message"`
+	Outcome    string `json:"outcome,omitempty"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"durationMs,omitempty"`
 }
 
 // categoryEndpoint maps item types to their create endpoints and payload wrapper keys
@@ -113,7 +120,11 @@ func Run(req MigrateRequest) *MigrateResult {
 }
 
 func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
+	started := time.Now()
 	result := &MigrateResult{}
+	defer func() {
+		result.DurationMs = time.Since(started).Milliseconds()
+	}()
 	emit := func(ev ProgressEvent) {
 		if progress != nil {
 			progress(ev)
@@ -123,7 +134,6 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 
 	dst, err := clientFromApplInfo(req.Destination)
 	if err != nil {
-		result := &MigrateResult{}
 		result.Results = append(result.Results, ItemResult{
 			Name: "destination", Type: "connection", Status: "error", Message: err.Error(),
 		})
@@ -136,7 +146,6 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 	if strings.TrimSpace(req.Source.URL) != "" {
 		src, err = clientFromApplInfo(req.Source)
 		if err != nil {
-			result := &MigrateResult{}
 			result.Results = append(result.Results, ItemResult{
 				Name: "source", Type: "connection", Status: "error", Message: err.Error(),
 			})
@@ -147,12 +156,13 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 		emit(ProgressEvent{Phase: "preparing", Message: "Connected to source and destination"})
 	}
 
-	state := newAutomationState()
+	sourceSnap := NewSourceSnapshot(req.SourceDiscovery, req.Items)
+	state := newAutomationState(sourceSnap)
 	state.progress = progress
 	items := req.Items
 	if src != nil {
 		emit(ProgressEvent{Phase: "preparing", Message: "Expanding migration dependencies…"})
-		expanded, depErrs := expandMigrationDependencies(src, req.Items)
+		expanded, depErrs := expandMigrationDependencies(src, sourceSnap, req.Items)
 		items = expanded
 		for _, msg := range depErrs {
 			appendItemResult(result, ItemResult{
@@ -164,7 +174,11 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 		}
 	}
 	items = filterItemsForInstanceTypeOrchestration(items)
-	items = sortItemsForMigration(items)
+	skipped, migratable := partitionNonMigratableItems(items)
+	for _, r := range skipped {
+		appendItemResult(result, r)
+	}
+	items = sortItemsForMigration(migratable)
 
 	queue := make([]string, len(items))
 	for i, it := range items {
@@ -180,25 +194,29 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 	total := len(items)
 	rec := newMigrationRecorder(result, emit)
 	serialItems, catalogItems := partitionCatalogItems(items)
-	workers := catalogParallelWorkers(req, len(catalogItems))
+	waveWorkers := migrationParallelWorkers(req)
+	catalogWorkers := catalogParallelWorkers(req, len(catalogItems))
 
-	for i, item := range serialItems {
-		rec.runItem(src, dst, state, item, i+1, total)
+	idx := 0
+	for _, wave := range groupMigrationWaves(serialItems) {
+		idx = rec.runWave(src, dst, state, wave, waveWorkers, total, idx)
 	}
 
 	if len(catalogItems) == 0 {
 		return result
 	}
 
-	base := len(serialItems)
-	if workers > 1 {
+	_ = state.refreshDestFormIndex(dst)
+
+	if catalogWorkers > 1 {
 		rec.doneCount.Store(0)
-		rec.runCatalogItemsParallel(src, dst, catalogItems, workers, total, base)
+		rec.runItemsParallel(src, dst, state, catalogItems, catalogWorkers, total, idx, "parallel")
 		return result
 	}
 
-	for i, item := range catalogItems {
-		rec.runItem(src, dst, state, item, base+i+1, total)
+	for _, item := range catalogItems {
+		idx++
+		rec.runItem(src, dst, state, item, idx, total)
 	}
 
 	return result
@@ -226,6 +244,41 @@ func normalizeType(t string) string {
 	default:
 		return strings.TrimSpace(t)
 	}
+}
+
+var nonMigratableTypeMessages = map[string]string{
+	"integration": "Integrations are discovery-only — configure them manually on the destination appliance",
+}
+
+func isNonMigratableType(typ string) bool {
+	_, ok := nonMigratableTypeMessages[normalizeType(typ)]
+	return ok
+}
+
+func skipNonMigratableItem(item SelectedItem) ItemResult {
+	typ := normalizeType(item.Type)
+	msg, ok := nonMigratableTypeMessages[typ]
+	if !ok {
+		msg = fmt.Sprintf("Migration of type %q is not supported", item.Type)
+	}
+	return ItemResult{
+		Name:    item.Name,
+		Type:    item.Type,
+		Status:  "skipped",
+		Message: msg,
+	}
+}
+
+func partitionNonMigratableItems(items []SelectedItem) (skipped []ItemResult, migratable []SelectedItem) {
+	for _, it := range items {
+		if isNonMigratableType(it.Type) {
+			r := skipNonMigratableItem(it)
+			skipped = append(skipped, r)
+			continue
+		}
+		migratable = append(migratable, it)
+	}
+	return skipped, migratable
 }
 
 func keyForItem(it SelectedItem) itemKey {
@@ -333,7 +386,7 @@ func extractInstanceTypeLayoutIDs(obj map[string]interface{}) []int64 {
 
 // FetchFullNodeType loads a complete container type record from the source appliance.
 func FetchFullNodeType(src *morpheus.Client, id int64) (map[string]interface{}, error) {
-	item, err := fetchSourceByID(src, "nodeType", id)
+	item, err := fetchSourceByIDLive(src, "nodeType", id)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +397,7 @@ func FetchFullNodeType(src *morpheus.Client, id int64) (map[string]interface{}, 
 	return obj, nil
 }
 
-func fetchSourceByID(src *morpheus.Client, typ string, id int64) (SelectedItem, error) {
+func fetchSourceByIDLive(src *morpheus.Client, typ string, id int64) (SelectedItem, error) {
 	switch normalizeType(typ) {
 	case "layout":
 		return fetchSourceResource(src,
@@ -363,6 +416,12 @@ func fetchSourceByID(src *morpheus.Client, typ string, id int64) (SelectedItem, 
 			fmt.Sprintf("/api/task-sets/%d", id),
 			"Workflows", "workflow",
 			[]string{"taskSet"},
+		)
+	case "form":
+		return fetchSourceResource(src,
+			fmt.Sprintf("/api/library/option-type-forms/%d", id),
+			"Forms", "form",
+			[]string{"optionTypeForm"},
 		)
 	default:
 		return SelectedItem{}, fmt.Errorf("unsupported dependency type %q", typ)
@@ -409,7 +468,7 @@ func unwrapFirstJSONKey(body []byte, keys []string) (json.RawMessage, string, er
 	return nil, "", fmt.Errorf("source response missing %q", strings.Join(keys, `" or "`))
 }
 
-func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]SelectedItem, []string) {
+func expandMigrationDependencies(src *morpheus.Client, snap *SourceSnapshot, in []SelectedItem) ([]SelectedItem, []string) {
 	items := make([]SelectedItem, len(in))
 	copy(items, in)
 
@@ -447,7 +506,7 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 					if _, ok := byKey[lk]; ok {
 						continue
 					}
-					dep, err := fetchSourceByID(src, "layout", lid)
+					dep, err := snap.ResolveSourceItem(src, "layout", lid)
 					if err != nil {
 						errs = append(errs, fmt.Sprintf("instance type %q: required layout %d not retrievable (%v)", it.Name, lid, err))
 						continue
@@ -462,7 +521,7 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 					if _, ok := byKey[nk]; ok {
 						continue
 					}
-					dep, err := fetchSourceByID(src, "nodeType", nid)
+					dep, err := snap.ResolveSourceItem(src, "nodeType", nid)
 					if err != nil {
 						errs = append(errs, fmt.Sprintf("layout %q: required node type %d not retrievable (%v)", it.Name, nid, err))
 						continue
@@ -475,7 +534,7 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 					if _, ok := byKey[wk]; ok {
 						continue
 					}
-					dep, err := fetchSourceByID(src, "workflow", wid)
+					dep, err := snap.ResolveSourceItem(src, "workflow", wid)
 					if err != nil {
 						errs = append(errs, fmt.Sprintf("layout %q: required workflow %d not retrievable (%v)", it.Name, wid, err))
 						continue
@@ -485,20 +544,49 @@ func expandMigrationDependencies(src *morpheus.Client, in []SelectedItem) ([]Sel
 				}
 			case "catalogItem":
 				obj := parseObject(it.RawJSON)
-				if extractCatalogInstanceTypeCode(obj) == "" && it.ID > 0 {
-					if full, err := fetchFullCatalogItem(src, it.ID); err == nil {
-						obj = full
-						it.RawJSON = mustJSON(full)
-						byKey[k] = it
+				if enriched, err := snap.EnrichCatalogItem(src, it); err == nil {
+					it = enriched
+					obj = parseObject(it.RawJSON)
+					byKey[k] = it
+				}
+				for _, fid := range extractCatalogFormIDs(obj) {
+					fk := itemKey{Type: "form", ID: fid}
+					if _, ok := byKey[fk]; ok {
+						continue
+					}
+					dep, err := snap.ResolveSourceItem(src, "form", fid)
+					if err != nil {
+						errs = append(errs, fmt.Sprintf("catalog item %q: required form %d not retrievable (%v)", it.Name, fid, err))
+						continue
+					}
+					byKey[fk] = dep
+					changed = true
+				}
+				if wf, ok := obj["workflow"].(map[string]interface{}); ok && wf != nil {
+					wfID := intFromAny(wf["id"])
+					if wfID > 0 {
+						wk := itemKey{Type: "workflow", ID: wfID}
+						if _, ok := byKey[wk]; !ok {
+							dep, err := snap.ResolveSourceItem(src, "workflow", wfID)
+							if err != nil {
+								errs = append(errs, fmt.Sprintf("catalog item %q: required workflow %d not retrievable (%v)", it.Name, wfID, err))
+							} else {
+								byKey[wk] = dep
+								changed = true
+							}
+						}
 					}
 				}
 				itCode := extractCatalogInstanceTypeCode(obj)
 				if itCode == "" {
 					continue
 				}
-				srcIT, err := findSourceInstanceTypeByCode(src, itCode)
+				srcIT, err := snap.ResolveInstanceTypeByCode(src, itCode)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("catalog item %q: required instance type %q not retrievable (%v)", it.Name, itCode, err))
+					continue
+				}
+				if isSystemInstanceTypeItem(srcIT) {
 					continue
 				}
 				ik := itemKey{Type: "instanceType", ID: srcIT.ID}
