@@ -44,7 +44,7 @@ func sortItemsForMigration(items []SelectedItem) []SelectedItem {
 }
 
 func itemTypeOrder(t string) int {
-	switch t {
+	switch normalizeType(t) {
 	case "credential":
 		return -3
 	case "group":

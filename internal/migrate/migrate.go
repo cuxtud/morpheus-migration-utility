@@ -159,10 +159,10 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 	sourceSnap := NewSourceSnapshot(req.SourceDiscovery, req.Items)
 	state := newAutomationState(sourceSnap)
 	state.progress = progress
-	items := req.Items
+	items := normalizeSelectedItems(req.Items)
 	if src != nil {
 		emit(ProgressEvent{Phase: "preparing", Message: "Expanding migration dependencies…"})
-		expanded, depErrs := expandMigrationDependencies(src, sourceSnap, req.Items)
+		expanded, depErrs := expandMigrationDependencies(src, sourceSnap, items)
 		items = expanded
 		for _, msg := range depErrs {
 			appendItemResult(result, ItemResult{
@@ -241,9 +241,26 @@ func normalizeType(t string) string {
 		return "cloud"
 	case "workflow", "taskset":
 		return "workflow"
+	case "optionlist", "optiontypelist":
+		return "optionList"
+	case "input", "optiontype":
+		return "input"
+	case "virtualimage":
+		return "virtualImage"
+	case "form", "optiontypeform":
+		return "form"
 	default:
 		return strings.TrimSpace(t)
 	}
+}
+
+func normalizeSelectedItems(items []SelectedItem) []SelectedItem {
+	out := make([]SelectedItem, len(items))
+	for i, it := range items {
+		it.Type = normalizeType(it.Type)
+		out[i] = it
+	}
+	return out
 }
 
 var nonMigratableTypeMessages = map[string]string{

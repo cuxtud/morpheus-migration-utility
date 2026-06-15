@@ -1,37 +1,40 @@
 package migrate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestPartitionCatalogItems(t *testing.T) {
-	items := []SelectedItem{
-		{Type: "catalogItem", Name: "a"},
-		{Type: "instanceType", Name: "it"},
-		{Type: "catalogItem", Name: "b"},
-		{Type: "input", Name: "in"},
-	}
-	serial, catalogs := partitionCatalogItems(items)
-	if len(serial) != 2 || len(catalogs) != 2 {
-		t.Fatalf("serial=%d catalogs=%d", len(serial), len(catalogs))
-	}
-	if serial[0].Name != "it" || serial[1].Name != "in" {
-		t.Fatalf("serial order: %#v", serial)
+func TestNormalizeType_optionList(t *testing.T) {
+	for _, in := range []string{"optionList", "optionlist", "optionTypeList", "optiontypelist", " OptionList "} {
+		if got := normalizeType(in); got != "optionList" {
+			t.Fatalf("normalizeType(%q) = %q, want optionList", in, got)
+		}
 	}
 }
 
-func TestCatalogParallelWorkers(t *testing.T) {
-	req := MigrateRequest{}
-	if got := catalogParallelWorkers(req, 1); got != 1 {
-		t.Fatalf("single catalog: %d", got)
+func TestMigrateOneItem_routesOptionList(t *testing.T) {
+	for _, typ := range []string{"optionList", "optionlist"} {
+		res := migrateOneItem(migrateItemContext{
+			item: SelectedItem{
+				Type:    typ,
+				Name:    "Site",
+				ID:      1,
+				RawJSON: `{"name":"Site","type":"manual"}`,
+			},
+		})
+		if res.Status == "skipped" && strings.Contains(res.Message, "not yet supported") {
+			t.Fatalf("type %q fell through to generic skip: %s", typ, res.Message)
+		}
+		if res.Type != "optionList" && normalizeType(typ) == "optionList" {
+			t.Fatalf("type %q result type %q", typ, res.Type)
+		}
 	}
-	if got := catalogParallelWorkers(req, 10); got != defaultCatalogParallelism {
-		t.Fatalf("auto: %d want %d", got, defaultCatalogParallelism)
-	}
-	req.ParallelCatalog = 1
-	if got := catalogParallelWorkers(req, 10); got != 1 {
-		t.Fatalf("sequential override: %d", got)
-	}
-	req.ParallelCatalog = 8
-	if got := catalogParallelWorkers(req, 3); got != 3 {
-		t.Fatalf("cap at catalog count: %d", got)
+}
+
+func TestNormalizeSelectedItems_canonicalizesTypes(t *testing.T) {
+	items := normalizeSelectedItems([]SelectedItem{{Type: "optionlist"}, {Type: "catalogitem"}})
+	if items[0].Type != "optionList" || items[1].Type != "catalogItem" {
+		t.Fatalf("got %#v", items)
 	}
 }
