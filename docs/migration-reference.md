@@ -81,6 +81,18 @@ Items in the same dependency tier migrate concurrently (default **4 workers**). 
 
 When migration uses a saved discovery (`discoveryId` from PostgreSQL), the server reuses discovery JSON for lookups (clouds, instance types, forms, layouts) before calling the source API again.
 
+### Form matching (v1.0.6+)
+
+Destination forms are resolved from `GET /api/library/option-type-forms` by **exact** `name` match (trimmed, case-insensitive). A different form with the same `code` is **not** treated as a match.
+
+When the name exists on the destination, migration compares field groups and options:
+
+- **Content matches** → skipped (`Form already exists and matches source`)
+- **Content differs** → updated on the destination
+- **Name missing** → created (or blocked if Morpheus rejects duplicate `code`)
+
+Catalog items always run this form sync; they no longer link to a destination form without checking content.
+
 ## Outcome statuses
 
 | Status | Meaning |

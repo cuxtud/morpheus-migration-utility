@@ -11,6 +11,8 @@
 | Migration **blocked** (Git task) | Create a Git integration on the destination with the **same name** as source (e.g. `GIT Radu`) and attach the SSH key pair |
 | Migration **blocked** (option list) | Plugin lists and inline-credential REST/LDAP lists must be created manually; credential-backed lists need matching destination credentials |
 | Migration **skipped** (option list / integration) | **Integrations** are discovery-only; update to **v1.0.5+** for standalone option list migration |
+| Migration **skipped** (form) | **v1.0.6+** skips only when the destination has a form with the **exact same name** and matching field content; partial name matches do not count |
+| Form reported **exists** but name not on destination | Update to **v1.0.6+** — older builds could match by shared `code` instead of exact `name` |
 | Migration stream disconnected | Long runs may drop the browser stream; migration can continue server-side — check destination and server logs |
 | Port 443 permission denied | Run as root or set `PORT=8443` |
 | Empty fleet after restart | Set `DATABASE_URL` or re-run discover |

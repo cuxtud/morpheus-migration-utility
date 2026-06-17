@@ -48,7 +48,7 @@ Download discovery JSON from the select step, or load a previous export from **C
 - **Instance types** — related **layouts**, **node types**, and **workflows** can be auto-included. **System** (Morpheus-seeded) instance types are excluded from discovery and skipped if referenced directly.
 - **Workflows** — related **tasks** can be auto-included.
 - **Catalog items** — related **forms**, **workflows**, and user **instance types** can be auto-included. Catalogs using system instance types resolve against destination built-ins.
-- **Forms** — related **inputs** and **option lists** can be auto-included or created on the destination.
+- **Forms** — matched on the destination by **exact form name** (`optionTypeForms[].name`); field content is compared and **updated** when it differs. Related **inputs** and **option lists** can be auto-included or created on the destination.
 - **Option lists** — can be migrated by selecting the **Option Lists** category directly, or created when migrating list-backed inputs.
 - **Node types** — **virtual images** are matched on the destination by **name**; missing images are **blocked** with a clear message.
 - **Tasks** — repository-backed tasks require a Git integration on the destination with the **same integration name** as on the source (not the repository URL). SSH key pairs must exist on the destination.
