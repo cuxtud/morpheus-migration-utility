@@ -8,20 +8,33 @@ import (
 	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
-func migrateOptionListWithAutomation(src, dst *morpheus.Client, item SelectedItem) ItemResult {
+func migrateOptionListWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
 	name := strings.TrimSpace(item.Name)
+	item.Type = normalizeType(item.Type)
+
 	var obj map[string]interface{}
-	if src != nil && item.ID > 0 {
+	if state != nil && state.sourceSnap != nil {
+		if snapObj, err := state.sourceSnap.OptionListObject(src, item); err == nil && snapObj != nil {
+			obj = snapObj
+		}
+	}
+	if obj == nil && src != nil && item.ID > 0 {
 		full, err := fetchSourceOptionTypeList(src, item.ID)
 		if err != nil {
 			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: err.Error()}
 		}
 		obj = full
-	} else if err := json.Unmarshal([]byte(item.RawJSON), &obj); err != nil {
-		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("invalid option list json: %v", err)}
+	}
+	if obj == nil {
+		if err := json.Unmarshal([]byte(item.RawJSON), &obj); err != nil || obj == nil {
+			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("invalid option list json: %v", err)}
+		}
 	}
 	if n := strings.TrimSpace(stringFromAny(obj["name"])); n != "" {
 		name = n
+	}
+	if dst == nil {
+		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: "destination appliance is required"}
 	}
 
 	existingID := findOptionTypeListIDByName(dst, name)

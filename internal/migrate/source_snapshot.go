@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 
@@ -231,6 +232,38 @@ func (s *SourceSnapshot) FormObject(src *morpheus.Client, item SelectedItem) (ma
 		}
 	}
 	return fetchFullOptionTypeForm(src, item.ID)
+}
+
+// OptionListObject returns option list JSON preferring discovery data over live API.
+func (s *SourceSnapshot) OptionListObject(src *morpheus.Client, item SelectedItem) (map[string]interface{}, error) {
+	if obj := unwrapOptionListObject(parseObject(item.RawJSON)); optionListObjectLooksComplete(obj) {
+		return obj, nil
+	}
+	if item.ID > 0 {
+		if it, ok := s.Lookup("optionList", item.ID); ok {
+			if obj := unwrapOptionListObject(parseObject(it.RawJSON)); optionListObjectLooksComplete(obj) {
+				return obj, nil
+			}
+		}
+	}
+	if src == nil || item.ID <= 0 {
+		return nil, fmt.Errorf("option list details unavailable")
+	}
+	return fetchSourceOptionTypeList(src, item.ID)
+}
+
+func unwrapOptionListObject(raw map[string]interface{}) map[string]interface{} {
+	if raw == nil {
+		return nil
+	}
+	if wrapped, ok := raw["optionTypeList"].(map[string]interface{}); ok && wrapped != nil {
+		return wrapped
+	}
+	return raw
+}
+
+func optionListObjectLooksComplete(obj map[string]interface{}) bool {
+	return obj != nil && strings.TrimSpace(stringFromAny(obj["name"])) != ""
 }
 
 func unwrapFormObject(raw map[string]interface{}) map[string]interface{} {

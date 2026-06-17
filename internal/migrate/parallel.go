@@ -102,7 +102,7 @@ func migrateOneItem(ctx migrateItemContext) ItemResult {
 	case "form":
 		return migrateFormWithAutomation(src, dst, item, state)
 	case "optionList":
-		return migrateOptionListWithAutomation(src, dst, item)
+		return migrateOptionListWithAutomation(src, dst, item, state)
 	case "cypher":
 		return migrateCypher(src, dst, item)
 	case "instanceType":
