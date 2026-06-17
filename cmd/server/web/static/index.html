@@ -1870,6 +1870,26 @@
         <tbody id="profilesSavedDiscoveriesBody"></tbody>
       </table>
     </div>
+
+    <div class="panel" id="profilesCachePanel" style="margin-top:18px;">
+      <div class="panel-title">Clear cached data</div>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 12px;line-height:1.55;">
+        Remove stored discovery snapshots and migration history. <strong>Appliance profiles are not deleted.</strong>
+        Browser tab session data is cleared as well.
+      </p>
+      <div id="cacheClearOptions" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;font-size:13px;">
+        <label class="checkbox-label"><input type="checkbox" id="cacheOptFleet" checked /> Fleet discovery snapshots (inventory cache)</label>
+        <label class="checkbox-label cache-opt-pg"><input type="checkbox" id="cacheOptMigrationDiscoveries" checked /> Migration discovery snapshots (PostgreSQL)</label>
+        <label class="checkbox-label cache-opt-pg"><input type="checkbox" id="cacheOptMigrationRuns" checked /> Migration run history (PostgreSQL)</label>
+        <label class="checkbox-label"><input type="checkbox" id="cacheOptWorkflowSessions" checked /> Saved migration workflow sessions (browser + PostgreSQL)</label>
+      </div>
+      <p id="cacheClearFileHint" class="hidden" style="font-size:12px;color:var(--text3);margin:0 0 12px;">
+        Without PostgreSQL, only in-memory fleet snapshots and this browser's session data are cleared.
+      </p>
+      <div class="btn-row" style="margin-top:0;">
+        <button type="button" class="btn btn-secondary" id="btnClearCache" onclick="clearApplicationCache()">🗑 Clear cache</button>
+      </div>
+    </div>
   </div>
 
   <div id="migrationShell">
@@ -6737,6 +6757,80 @@ async function loadStorageInfo() {
     state.storagePostgres = false;
   }
   updateSavedDiscoveriesPanelsVisibility();
+  updateCachePanelVisibility();
+}
+
+function updateCachePanelVisibility() {
+  const pg = !!state.storagePostgres;
+  document.querySelectorAll('.cache-opt-pg').forEach((el) => {
+    el.style.display = pg ? '' : 'none';
+  });
+  const hint = document.getElementById('cacheClearFileHint');
+  if (hint) hint.classList.toggle('hidden', pg);
+}
+
+async function clearApplicationCache() {
+  const fleet = document.getElementById('cacheOptFleet')?.checked;
+  const migrationDiscoveries = state.storagePostgres && document.getElementById('cacheOptMigrationDiscoveries')?.checked;
+  const migrationRuns = state.storagePostgres && document.getElementById('cacheOptMigrationRuns')?.checked;
+  const workflowSessions = document.getElementById('cacheOptWorkflowSessions')?.checked;
+  if (!fleet && !migrationDiscoveries && !migrationRuns && !workflowSessions) {
+    return alert('Select at least one cache category to clear.');
+  }
+  const parts = [];
+  if (fleet) parts.push('fleet discovery snapshots');
+  if (migrationDiscoveries) parts.push('migration discovery snapshots');
+  if (migrationRuns) parts.push('migration run history');
+  if (workflowSessions) parts.push('saved workflow sessions and browser tab data');
+  if (!confirm('Clear ' + parts.join(', ') + '?\n\nAppliance profile credentials are kept.')) return;
+
+  let res = {};
+  try {
+    res = await api('/api/cache/clear', 'POST', {
+      fleetSnapshots: !!fleet,
+      migrationDiscoveries: !!migrationDiscoveries,
+      migrationRuns: !!migrationRuns,
+      workflowSessions: !!workflowSessions,
+    });
+  } catch (e) {
+    return alert('Clear cache failed: ' + (e.message || e));
+  }
+
+  if (workflowSessions) {
+    clearDiscoverySession();
+  }
+  if (fleet) {
+    state.fleetSnapshots = {};
+    state.fleetDiscoveryErrors = {};
+    renderDiscoveredAppliancesTable();
+    if (state.fleetDetailProfileId) fleetDetailBack();
+  }
+  if (migrationDiscoveries || migrationRuns) {
+    state.discoveryHistory = [];
+    state.currentDiscoveryId = 0;
+    state.currentDiscoveryTime = '';
+    renderDiscoveryHistoryRows();
+  }
+  if (fleet || migrationDiscoveries) {
+    state.discovery = null;
+    state.selected.clear();
+    state.allResults = [];
+    setStep(1);
+    showView('view-connect');
+  }
+
+  const n = (k) => Number(res[k] || 0);
+  const summary = [
+    n('fleetSnapshots') ? `${n('fleetSnapshots')} fleet snapshot(s)` : '',
+    n('migrationDiscoveries') ? `${n('migrationDiscoveries')} migration discovery(s)` : '',
+    n('migrationRuns') ? `${n('migrationRuns')} migration run(s)` : '',
+    n('workflowSessions') ? `${n('workflowSessions')} workflow session(s)` : '',
+  ].filter(Boolean).join(', ');
+  alert(summary ? `Cache cleared: ${summary}.` : 'Cache cleared.');
+  if (state.storagePostgres) {
+    loadDiscoveryHistory();
+    loadFleetDiscoveredFromServer(true);
+  }
 }
 
 function discoveryApplianceName(d) {

@@ -31,6 +31,8 @@ type Repository interface {
 	DeleteWorkflowSession(id string) error
 	LatestWorkflowSession() (*WorkflowSessionData, string, error)
 
+	ClearCache(opts ClearCacheOptions) (ClearCacheResult, error)
+
 	// SupportsJSONB is true when the backend persists full JSON documents (Postgres).
 	SupportsJSONB() bool
 }

@@ -32,6 +32,7 @@ With PostgreSQL, past discovery snapshots appear under **Migration → Connect**
 
 - **Load** — restore discovery into the selection step (switches to Migration)
 - **Delete** — remove a snapshot (warns if migration runs still reference it)
+- **Clear cache** — under **Appliance profiles**, remove all cached discoveries, migration history, and saved sessions in one step (profiles are kept)
 - Columns include **appliance name**, item counts, and **used by runs**
 
 ### Remember session

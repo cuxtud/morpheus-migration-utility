@@ -113,6 +113,24 @@ func (r *FileRepository) DeleteSnapshots(profileID string) error {
 	return nil
 }
 
+func (r *FileRepository) ClearCache(opts ClearCacheOptions) (ClearCacheResult, error) {
+	opts.Normalize()
+	out := ClearCacheResult{Postgres: false}
+	if !opts.FleetSnapshots {
+		return out, nil
+	}
+	var keys []any
+	r.snapshots.Range(func(key, _ any) bool {
+		keys = append(keys, key)
+		return true
+	})
+	for _, key := range keys {
+		r.snapshots.Delete(key)
+		out.FleetSnapshots++
+	}
+	return out, nil
+}
+
 // FileRepository delegates JSONB-only features to NoopExtras.
 type fileRepo struct {
 	*FileRepository

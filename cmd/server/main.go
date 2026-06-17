@@ -83,6 +83,7 @@ func main() {
 	mux.HandleFunc("/api/profiles/snapshots", handleListProfileSnapshots)
 	mux.HandleFunc("/api/session", handleWorkflowSession)
 	mux.HandleFunc("/api/storage", handleStorageInfo)
+	mux.HandleFunc("/api/cache/clear", handleClearCache)
 	// Legacy fleet routes → same handlers
 	mux.HandleFunc("/api/appliances", handleListProfiles)
 	mux.HandleFunc("/api/appliances/save", handleSaveProfile)

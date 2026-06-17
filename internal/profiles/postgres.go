@@ -443,3 +443,54 @@ func (r *PostgresRepository) LatestWorkflowSession() (*WorkflowSessionData, stri
 	}
 	return &data, id, nil
 }
+
+func (r *PostgresRepository) ClearCache(opts ClearCacheOptions) (ClearCacheResult, error) {
+	opts.Normalize()
+	out := ClearCacheResult{Postgres: true}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	run := func(sql string) (int64, error) {
+		res, err := tx.Exec(sql)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+
+	if opts.FleetSnapshots {
+		n, err := run(`DELETE FROM appliance_discoveries`)
+		if err != nil {
+			return out, err
+		}
+		out.FleetSnapshots = n
+	}
+	if opts.MigrationDiscoveries {
+		n, err := run(`DELETE FROM migration_discoveries`)
+		if err != nil {
+			return out, err
+		}
+		out.MigrationDiscoveries = n
+	}
+	if opts.MigrationRuns {
+		n, err := run(`DELETE FROM migration_runs`)
+		if err != nil {
+			return out, err
+		}
+		out.MigrationRuns = n
+	}
+	if opts.WorkflowSessions {
+		n, err := run(`DELETE FROM workflow_sessions`)
+		if err != nil {
+			return out, err
+		}
+		out.WorkflowSessions = n
+	}
+	if err := tx.Commit(); err != nil {
+		return out, err
+	}
+	return out, nil
+}
