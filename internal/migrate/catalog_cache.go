@@ -153,9 +153,7 @@ func (s *automationState) findDestFormID(dst *morpheus.Client, code, name string
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if wantName != "" {
-		if id := c.formByName[wantName]; id > 0 {
-			return id
-		}
+		return c.formByName[wantName]
 	}
 	if wantCode != "" {
 		return c.formByCode[wantCode]

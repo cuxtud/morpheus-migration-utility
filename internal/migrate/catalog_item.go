@@ -344,10 +344,10 @@ func ensureCatalogFormRefs(src, dst *morpheus.Client, obj map[string]interface{}
 
 func resolveCatalogFormRef(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (int64, string, *ItemResult) {
 	formCode, formName, destID := resolveDestinationFormID(src, dst, state, ref)
-	if destID > 0 {
-		return destID, "", nil
-	}
 	if src == nil {
+		if destID > 0 {
+			return destID, "", nil
+		}
 		return 0, "", catalogFormBlockedRef(ref, formCode, formName, "source appliance is required to migrate forms")
 	}
 
@@ -379,6 +379,8 @@ func resolveCatalogFormRef(src, dst *morpheus.Client, state *automationState, re
 	note := fmt.Sprintf("Form: migrated form %q to destination (#%d)", label, destID)
 	if res.Status == "skipped" {
 		note = fmt.Sprintf("Form: linked catalog to existing form %q (#%d)", label, destID)
+	} else if res.Outcome == "updated" {
+		note = fmt.Sprintf("Form: updated existing form %q on destination (#%d)", label, destID)
 	}
 	return destID, note, nil
 }
