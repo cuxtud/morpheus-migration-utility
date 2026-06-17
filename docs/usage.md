@@ -21,10 +21,10 @@ The web UI has three main areas: **Migration**, **Fleet inventory**, and **Appli
 | Step | Action |
 |------|--------|
 | 1 | **Connect source** — profile or URL + credentials → **Test connection** → **Connect & Discover** |
-| 2 | Discovery queries the source API (~25 resource types); warnings appear for endpoints the token cannot access |
+| 2 | Discovery queries the source API (~25 resource types); **duration** is shown when complete; warnings appear for endpoints the token cannot access |
 | 3 | **Select items** — search, filter by category, select resources; preview shows **auto-included dependencies** |
 | 4 | **Destination** — profile or inline credentials → review preview → **Begin migration** |
-| 5 | **Results** — per-item success, skipped, failed, blocked, or partial; export JSON; discovery timestamp when Postgres is enabled |
+| 5 | **Results** — per-item success, skipped, failed, blocked, or partial; live progress stream; export JSON; discovery timestamp when Postgres is enabled |
 
 ### Saved discoveries
 
@@ -44,12 +44,17 @@ Download discovery JSON from the select step, or load a previous export from **C
 
 ## Dependency-aware migration
 
-- **Instance types** — related **layouts**, **node types**, and **workflows** can be auto-included.
+- **Instance types** — related **layouts**, **node types**, and **workflows** can be auto-included. **System** (Morpheus-seeded) instance types are excluded from discovery and skipped if referenced directly.
 - **Workflows** — related **tasks** can be auto-included.
+- **Catalog items** — related **forms**, **workflows**, and user **instance types** can be auto-included. Catalogs using system instance types resolve against destination built-ins.
+- **Forms** — related **inputs** and **option lists** can be auto-included or created on the destination.
+- **Option lists** — can be migrated by selecting the **Option Lists** category directly, or created when migrating list-backed inputs.
 - **Node types** — **virtual images** are matched on the destination by **name**; missing images are **blocked** with a clear message.
-- **System library items** — Morpheus-seeded objects (`account: null`) are excluded from discovery and migration.
+- **Tasks** — repository-backed tasks require a Git integration on the destination with the **same integration name** as on the source (not the repository URL). SSH key pairs must exist on the destination.
+- **Integrations** — appear in discovery for inventory and relations but are **not migrated**; create matching integrations on the destination before migrating dependent tasks.
+- **Parallel waves** — items in the same dependency tier migrate concurrently (default 4 workers); multiple catalog items can migrate in parallel after dependencies complete.
 
-See [Migration reference](migration-reference.md) for per-type support.
+See [Migration reference](migration-reference.md) for the full per-type matrix.
 
 ## HTTP debug
 

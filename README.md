@@ -19,13 +19,14 @@ A self-contained tool for HPE Morpheus — **fleet inventory** across many appli
 
 ### Migration
 - **Discovery** across Morpheus library and automation types:
-  - Clouds, Integrations, Instance Types, Layouts, Node Types
+  - Clouds, Integrations, Instance Types, Layouts, Node Types, Virtual Images
   - Tasks, Workflows, Inputs, Option Lists, Forms
   - Catalog Items, Blueprints, Apps
   - Tenants, Roles, Users, Policies, Groups, Cypher
+- **Dependency-aware** — auto-includes layouts, tasks, forms, and related objects; parallel waves for faster runs
 - **Grouped checkbox UI** — select individual items or entire categories
 - **Live search & filter** across discovered items
-- **Migration with results** — per-item success/skip/fail with export to JSON
+- **Migration with results** — per-item success/skip/fail/blocked with export to JSON and live progress stream
 - **Single binary** — no runtime, no Docker, no dependencies
 - **HTTPS on port 443** — auto-generates a self-signed TLS cert on first run
 

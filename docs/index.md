@@ -6,8 +6,8 @@
 
 | Capability | Description |
 |------------|-------------|
-| **Discovery** | Inventory clouds, integrations, instance types, layouts, node types, tasks, workflows, inputs, catalogs, RBAC, cypher, and more |
-| **Migration** | Create or update selected objects on a destination appliance via the Morpheus API |
+| **Discovery** | Inventory clouds, integrations, instance types, layouts, node types, tasks, workflows, inputs, option lists, forms, catalogs, RBAC, cypher, and more |
+| **Migration** | Create or update selected objects on a destination appliance via the Morpheus API (parallel waves, discovery snapshot reuse) |
 | **Fleet** | Multi-appliance view with license, health dashboard, and resource counts |
 | **Persistence** | Optional PostgreSQL JSONB for profiles, snapshots, migration history, and UI sessions |
 
