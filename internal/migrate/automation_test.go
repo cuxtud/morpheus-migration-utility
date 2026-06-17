@@ -223,13 +223,26 @@ func TestRemapConfigFieldRefs_crossFieldUUIDs(t *testing.T) {
 	}
 }
 
-func TestIntegrationSearchPhrases(t *testing.T) {
-	p := integrationSearchPhrases("python_examples")
-	if len(p) < 2 {
-		t.Fatalf("expected multiple phrases, got %v", p)
+func TestResolveSourceGitIntegrationName_usesPlainName(t *testing.T) {
+	name, err := resolveSourceGitIntegrationName(nil, map[string]interface{}{
+		"id":   42,
+		"name": "GIT Radu",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if p[0] != "python_examples" {
-		t.Fatalf("first phrase: %v", p)
+	if name != "GIT Radu" {
+		t.Fatalf("got %q", name)
+	}
+}
+
+func TestResolveSourceGitIntegrationName_rejectsRepoURLWithoutSource(t *testing.T) {
+	_, err := resolveSourceGitIntegrationName(nil, map[string]interface{}{
+		"id":   42,
+		"name": "https://github.com/Radu-Sipetan_worldpay/morpheus_tasks.git",
+	})
+	if err == nil {
+		t.Fatal("expected error when repository name is a URL without source lookup")
 	}
 }
 

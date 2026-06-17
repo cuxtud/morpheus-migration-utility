@@ -2228,13 +2228,13 @@ func resolveTaskIntegrations(src, dst *morpheus.Client, task map[string]interfac
 	if file, ok := task["file"].(map[string]interface{}); ok {
 		if strings.EqualFold(stringFromAny(file["sourceType"]), "repository") {
 			repo, _ := file["repository"].(map[string]interface{})
-			repoName := stringFromAny(repo["name"])
-			if repoName == "" {
-				return fmt.Errorf("repository-backed task has no file.repository.name — fix source task")
-			}
-			integ, err := findGitIntegrationForRepository(dst, src, repoName, repo)
+			intName, err := resolveSourceGitIntegrationName(src, repo)
 			if err != nil {
 				return err
+			}
+			integ, err := findGitIntegrationByName(dst, intName)
+			if err != nil {
+				return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, repo))
 			}
 			if err := verifyIntegrationSSHKey(dst, integ); err != nil {
 				return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, repo))
@@ -2291,9 +2291,9 @@ func resolveTaskIntegrations(src, dst *morpheus.Client, task map[string]interfac
 		if err != nil {
 			return fmt.Errorf("git integration id %d (localScriptGitId): %w", srcID, err)
 		}
-		integ, err := findGitIntegrationForRepository(dst, src, intName, map[string]interface{}{"id": srcID})
+		integ, err := findGitIntegrationByName(dst, intName)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
 		}
 		if err := verifyIntegrationSSHKey(dst, integ); err != nil {
 			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
@@ -2388,80 +2388,60 @@ func isAnsibleIntegration(m map[string]interface{}) bool {
 	return strings.Contains(t, "ansible")
 }
 
-func findGitIntegrationForRepository(dst *morpheus.Client, src *morpheus.Client, repoName string, sourceRepo map[string]interface{}) (map[string]interface{}, error) {
-	if strings.TrimSpace(repoName) == "" {
-		return nil, fmt.Errorf("empty repository / integration name")
+func resolveSourceGitIntegrationName(src *morpheus.Client, repo map[string]interface{}) (string, error) {
+	if repo == nil {
+		return "", fmt.Errorf("repository-backed task has no file.repository reference")
 	}
-	phrases := integrationSearchPhrases(repoName)
-	var lastErr error
-	for _, ph := range phrases {
-		path := "/api/integrations?phrase=" + url.QueryEscape(ph) + "&max=100&offset=0"
-		body, err := dst.GetRaw(path)
+	repoID := intFromAny(repo["id"])
+	if src != nil && repoID > 0 {
+		name, err := integrationNameByID(src, repoID)
+		if err == nil && strings.TrimSpace(name) != "" {
+			return name, nil
+		}
 		if err != nil {
-			lastErr = err
-			continue
+			return "", fmt.Errorf("git integration id %d on source: %w", repoID, err)
 		}
-		list, err := parseIntegrationsList(body)
-		if err != nil {
-			lastErr = err
-			continue
+	}
+	name := strings.TrimSpace(stringFromAny(repo["name"]))
+	if name == "" {
+		return "", fmt.Errorf("repository-backed task has no Git integration name on source")
+	}
+	lower := strings.ToLower(name)
+	if strings.Contains(name, "://") || strings.HasPrefix(lower, "git@") || strings.Contains(lower, ".git") {
+		if src == nil || strings.TrimSpace(src.BaseURL) == "" {
+			return "", fmt.Errorf("source Morpheus credentials required to resolve Git integration id %d (repository host is %q, not an integration name)", repoID, name)
 		}
-		if picked := pickGitIntegration(list, repoName); picked != nil {
-			return picked, nil
-		}
+		return "", fmt.Errorf("could not resolve Git integration name for repository id %d on source (host %q)", repoID, name)
+	}
+	return name, nil
+}
+
+func findGitIntegrationByName(dst *morpheus.Client, name string) (map[string]interface{}, error) {
+	want := strings.ToLower(strings.TrimSpace(name))
+	if want == "" {
+		return nil, fmt.Errorf("empty Git integration name from source")
 	}
 	all, err := listIntegrationsAll(dst)
-	if err != nil && lastErr != nil {
-		return nil, fmt.Errorf("find Git integration for %q: %v (phrase search failed: %v)%s", repoName, err, lastErr, sourceRepoIntegrationHint(src, sourceRepo))
+	if err != nil {
+		return nil, fmt.Errorf("list integrations: %w", err)
 	}
-	if err == nil {
-		if picked := pickGitIntegration(all, repoName); picked != nil {
-			return picked, nil
-		}
-	}
-	return nil, fmt.Errorf("no Git integration on destination matches repository %q (tried phrases %v). Add a Git integration for this repo and matching SSH key.%s", repoName, phrases, sourceRepoIntegrationHint(src, sourceRepo))
-}
-
-func integrationSearchPhrases(repoName string) []string {
-	s := strings.TrimSpace(repoName)
-	out := []string{s}
-	if u := strings.SplitN(s, "_", 2); len(u) > 0 && u[0] != "" && u[0] != s {
-		out = append(out, u[0])
-	}
-	if len(s) > 6 {
-		out = append(out, s[:6])
-	}
-	// dedupe
-	seen := map[string]struct{}{}
-	var deduped []string
-	for _, p := range out {
-		p = strings.TrimSpace(p)
-		if p == "" {
+	var candidates []map[string]interface{}
+	for _, m := range all {
+		if !isGitIntegration(m) {
 			continue
 		}
-		if _, ok := seen[p]; ok {
-			continue
+		if strings.ToLower(stringFromAny(m["name"])) == want {
+			return m, nil
 		}
-		seen[p] = struct{}{}
-		deduped = append(deduped, p)
+		candidates = append(candidates, m)
 	}
-	return deduped
-}
-
-func parseIntegrationsList(body []byte) ([]map[string]interface{}, error) {
-	var wrap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &wrap); err != nil {
-		return nil, err
+	for _, m := range candidates {
+		n := strings.ToLower(stringFromAny(m["name"]))
+		if strings.Contains(n, want) || strings.Contains(want, n) {
+			return m, nil
+		}
 	}
-	raw, ok := wrap["integrations"]
-	if !ok {
-		return nil, fmt.Errorf("no integrations key")
-	}
-	var list []map[string]interface{}
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return nil, err
-	}
-	return list, nil
+	return nil, fmt.Errorf("no Git integration on destination named like %q — create one matching the source integration name and SSH key, then re-run migration", name)
 }
 
 func listIntegrationsAll(dst *morpheus.Client) ([]map[string]interface{}, error) {
@@ -2477,40 +2457,6 @@ func listIntegrationsAll(dst *morpheus.Client) ([]map[string]interface{}, error)
 		}
 	}
 	return out, nil
-}
-
-func pickGitIntegration(list []map[string]interface{}, repoName string) map[string]interface{} {
-	var gitOnly []map[string]interface{}
-	for _, m := range list {
-		if isGitIntegration(m) {
-			gitOnly = append(gitOnly, m)
-		}
-	}
-	if len(gitOnly) == 0 {
-		return nil
-	}
-	repoLower := strings.ToLower(strings.TrimSpace(repoName))
-	bestScore := -1
-	var best map[string]interface{}
-	for _, m := range gitOnly {
-		n := strings.ToLower(stringFromAny(m["name"]))
-		score := 0
-		switch {
-		case n == repoLower:
-			score = 100
-		case len(repoLower) >= 2 && len(n) >= 2 && (strings.Contains(n, repoLower) || strings.Contains(repoLower, n)):
-			score = 60
-		}
-		if score > bestScore {
-			bestScore = score
-			best = m
-		}
-	}
-	// Do not pick an unrelated Git integration (would create a broken repository link).
-	if bestScore >= 60 {
-		return best
-	}
-	return nil
 }
 
 func findAnsibleIntegrationByName(dst *morpheus.Client, name string) (map[string]interface{}, error) {

@@ -2,6 +2,29 @@
 
 Binaries and checksums are on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). The [Download](download.md) page links to the latest build.
 
+## v1.0.5
+
+**[Download v1.0.5](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.5)** · June 2026
+
+### Migration fixes
+
+- **Option lists** — Directly selected option lists migrate correctly (type normalization and dedicated migrator routing).
+- **Git integrations** — Repository-backed tasks match destination Git integrations by **integration name** (e.g. `GIT Radu`), not by repository host URL.
+
+### Downloads (v1.0.5)
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `morpheus-snapshot-linux-amd64` |
+| Linux ARM64 | `morpheus-snapshot-linux-arm64` |
+| Windows x64 | `morpheus-snapshot-windows-amd64.exe` |
+| macOS Intel | `morpheus-snapshot-mac-intel` |
+| macOS Apple Silicon | `morpheus-snapshot-mac-apple-silicon` |
+
+Verify downloads with `checksums.txt` in the [release assets](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.5).
+
+---
+
 ## v1.0.4
 
 **[Download v1.0.4](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.4)** · June 2026
