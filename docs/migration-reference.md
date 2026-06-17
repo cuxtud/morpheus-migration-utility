@@ -1,6 +1,6 @@
 # Migration reference
 
-Current release: **v1.0.5**. See [Release notes](releases.md) for version history.
+Current release: **v1.0.6**. See [Release notes](releases.md) for version history.
 
 ## What gets migrated
 
@@ -12,7 +12,7 @@ Current release: **v1.0.5**. See [Release notes](releases.md) for version histor
 | Workflows | `workflow` | ✅ | Related tasks auto-included; task names must resolve on destination |
 | Inputs | `input` | ✅ | Option types; list-backed inputs can create option lists on destination |
 | Option Lists | `optionList` | ✅ | Standalone selection or via inputs/forms; plugin/inline-auth lists may be **blocked** |
-| Forms | `form` | ✅ | Field groups and library inputs; may inline-create missing inputs |
+| Forms | `form` | ✅ | Exact name match on destination; updates when content differs; may inline-create missing inputs |
 | Instance Types | `instanceType` | ✅ | User-created types only; **system** seeded types are **skipped** |
 | Layouts | `layout` | ✅ | Often auto-included with instance types |
 | Node Types | `nodeType` | ✅ | Virtual image remapped by **name** on destination |

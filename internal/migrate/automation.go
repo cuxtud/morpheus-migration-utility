@@ -522,9 +522,6 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 
 	srcFormID := intFromAny(obj["id"])
 	existingID := findOptionTypeFormID(dst, formCode, name)
-	if existingID > 0 && state != nil {
-		state.registerDestForm(existingID, formCode, name, srcFormID)
-	}
 
 	if err := ensureFormFieldGroupLibraryInputs(src, dst, state, obj); err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form inputs: %v", err)}
@@ -540,11 +537,14 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	}
 
 	if existingID > 0 {
+		if !formNeedsUpdate(src, dst, obj, existingID) {
+			if state != nil {
+				state.registerDestForm(existingID, formCode, name, srcFormID)
+			}
+			return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form already exists and matches source"}
+		}
 		outcome, msg, err := putOptionTypeForm(dst, src, obj, existingID, formCode, name)
 		if err != nil {
-			if isDuplicateErr(err) && findOptionTypeFormID(dst, formCode, name) > 0 {
-				return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form already exists on destination"}
-			}
 			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: err.Error()}
 		}
 		if state != nil {
@@ -555,12 +555,21 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 
 	body, err := dst.PostRaw("/api/library/option-type-forms", payload)
 	if err != nil {
-		if isDuplicateErr(err) {
-			existingID = findOptionTypeFormID(dst, formCode, name)
+		if isDuplicateErr(err) && name != "" {
+			existingID = findOptionTypeFormIDByName(dst, name)
 			if existingID > 0 {
+				if !formNeedsUpdate(src, dst, obj, existingID) {
+					if state != nil {
+						state.registerDestForm(existingID, formCode, name, srcFormID)
+					}
+					return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form already exists and matches source"}
+				}
 				outcome, msg, putErr := putOptionTypeForm(dst, src, obj, existingID, formCode, name)
 				if putErr != nil {
 					return ItemResult{Name: name, Type: item.Type, Status: "error", Message: putErr.Error()}
+				}
+				if state != nil {
+					state.registerDestForm(existingID, formCode, name, srcFormID)
 				}
 				return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: outcome, Message: msg}
 			}
@@ -569,7 +578,7 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	}
 	newID := parseOptionTypeFormIDFromResponse(body)
 	if newID <= 0 {
-		if findOptionTypeFormID(dst, formCode, name) > 0 {
+		if name != "" && findOptionTypeFormIDByName(dst, name) > 0 {
 			return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form may already exist on destination"}
 		}
 	} else if state != nil {
@@ -785,9 +794,12 @@ func resolveDestinationFormID(src, dst *morpheus.Client, state *automationState,
 			return formCode, n, destID
 		}
 	}
-	for _, c := range uniqueNonEmptyStrings(formCode, strings.TrimSpace(stringFromAny(ref["code"]))) {
-		if destID = lookup(c, ""); destID > 0 {
-			return c, formName, destID
+	// Code-only lookup when no name is available (never match a different form by code alone).
+	if strings.TrimSpace(formName) == "" && strings.TrimSpace(stringFromAny(ref["name"])) == "" {
+		for _, c := range uniqueNonEmptyStrings(formCode, strings.TrimSpace(stringFromAny(ref["code"]))) {
+			if destID = lookup(c, ""); destID > 0 {
+				return c, formName, destID
+			}
 		}
 	}
 
@@ -1411,47 +1423,136 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 	return json.Marshal(map[string]interface{}{"optionTypeForm": root})
 }
 
-// findOptionTypeFormID resolves an existing destination form. Morpheus enforces globally
-// unique form names, so name match takes precedence over code when both are present.
+// findOptionTypeFormID resolves an existing destination form by exact name and/or code.
+// When name is provided, only an exact name match counts — code alone must not match a
+// different form (Morpheus names are globally unique; code can be reused across forms).
 func findOptionTypeFormID(dst *morpheus.Client, code, name string) int64 {
 	wantCode := strings.ToLower(strings.TrimSpace(code))
 	wantName := strings.ToLower(strings.TrimSpace(name))
 	if wantCode == "" && wantName == "" {
 		return 0
 	}
+	if wantName != "" {
+		return findOptionTypeFormIDByName(dst, name)
+	}
+	return findOptionTypeFormIDByCode(dst, code)
+}
+
+func listDestinationOptionTypeForms(dst *morpheus.Client) ([]map[string]interface{}, error) {
 	raws, err := paginateList(dst, "/api/library/option-type-forms", "optionTypeForms")
 	if err != nil {
-		return 0
+		return nil, err
 	}
-	var byCode, byName int64
+	rows := make([]map[string]interface{}, 0, len(raws))
 	for _, raw := range raws {
 		var row map[string]interface{}
 		if json.Unmarshal(raw, &row) != nil {
 			continue
 		}
-		id := intFromAny(row["id"])
-		if id <= 0 {
+		if intFromAny(row["id"]) <= 0 {
 			continue
 		}
-		if wantName != "" && strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == wantName {
-			byName = id
-		}
-		if wantCode != "" && strings.ToLower(strings.TrimSpace(stringFromAny(row["code"]))) == wantCode {
-			byCode = id
-		}
+		rows = append(rows, row)
 	}
-	if byName > 0 {
-		return byName
-	}
-	return byCode
+	return rows, nil
 }
 
 func findOptionTypeFormIDByCode(dst *morpheus.Client, code string) int64 {
-	return findOptionTypeFormID(dst, code, "")
+	wantCode := strings.ToLower(strings.TrimSpace(code))
+	if wantCode == "" {
+		return 0
+	}
+	rows, err := listDestinationOptionTypeForms(dst)
+	if err != nil {
+		return 0
+	}
+	for _, row := range rows {
+		if strings.ToLower(strings.TrimSpace(stringFromAny(row["code"]))) == wantCode {
+			return intFromAny(row["id"])
+		}
+	}
+	return 0
 }
 
 func findOptionTypeFormIDByName(dst *morpheus.Client, name string) int64 {
-	return findOptionTypeFormID(dst, "", name)
+	wantName := strings.ToLower(strings.TrimSpace(name))
+	if wantName == "" {
+		return 0
+	}
+	rows, err := listDestinationOptionTypeForms(dst)
+	if err != nil {
+		return 0
+	}
+	for _, row := range rows {
+		if strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == wantName {
+			return intFromAny(row["id"])
+		}
+	}
+	return 0
+}
+
+var formCompareKeys = []string{
+	"name", "code", "description", "labels", "visibility", "fieldGroups", "options", "formType",
+}
+
+func formNeedsUpdate(src, dst *morpheus.Client, srcForm map[string]interface{}, destID int64) bool {
+	if destID <= 0 || srcForm == nil {
+		return true
+	}
+	destForm, err := loadDestinationOptionTypeForm(dst, destID)
+	if err != nil || destForm == nil {
+		return true
+	}
+	srcName := strings.ToLower(strings.TrimSpace(stringFromAny(srcForm["name"])))
+	if srcName != "" {
+		destName := strings.ToLower(strings.TrimSpace(stringFromAny(destForm["name"])))
+		if srcName != destName {
+			return true
+		}
+	}
+	payload, err := buildOptionTypeFormPayload(src, dst, srcForm, destForm)
+	if err != nil {
+		return true
+	}
+	var wrap map[string]json.RawMessage
+	if json.Unmarshal(payload, &wrap) != nil {
+		return true
+	}
+	var expected map[string]interface{}
+	if json.Unmarshal(wrap["optionTypeForm"], &expected) != nil {
+		return true
+	}
+	return !formWritableContentEqual(expected, destForm)
+}
+
+func formWritableContentEqual(a, b map[string]interface{}) bool {
+	na := stripFormCompareMetadata(a)
+	nb := stripFormCompareMetadata(b)
+	if na == nil || nb == nil {
+		return false
+	}
+	for _, k := range formCompareKeys {
+		if !jsonEqualNormalized(na[k], nb[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+func stripFormCompareMetadata(form map[string]interface{}) map[string]interface{} {
+	raw, err := json.Marshal(form)
+	if err != nil {
+		return nil
+	}
+	var clone map[string]interface{}
+	if json.Unmarshal(raw, &clone) != nil {
+		return nil
+	}
+	for _, k := range []string{"id", "dateCreated", "lastUpdated", "account", "accountId", "uuid", "owner", "stats"} {
+		delete(clone, k)
+	}
+	normalizeFormOptionConfigMaps(clone)
+	return clone
 }
 
 func putOptionTypeForm(dst, src *morpheus.Client, obj map[string]interface{}, formID int64, formCode, name string) (outcome, msg string, err error) {
@@ -1467,9 +1568,6 @@ func putOptionTypeForm(dst, src *morpheus.Client, obj map[string]interface{}, fo
 	if err != nil && isDuplicateErr(err) {
 		if altID := findOptionTypeFormIDByName(dst, name); altID > 0 && altID != formID {
 			return putOptionTypeForm(dst, src, obj, altID, formCode, name)
-		}
-		if findOptionTypeFormID(dst, formCode, name) > 0 || findOptionTypeFormIDByName(dst, name) > 0 {
-			return "skipped", "Form already exists on destination", nil
 		}
 	}
 	if err != nil {

@@ -285,3 +285,78 @@ func TestFindOptionTypeFormID_prefersNameOverCode(t *testing.T) {
 		t.Fatalf("name match should win: got id %d want 10 (byCode=%d byName=%d)", got, byCode, byName)
 	}
 }
+
+func TestFindOptionTypeFormID_nameOnlyWhenNameProvided(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"id": 20, "name": "Other Form", "code": "shared-code"},
+	}
+	wantName := strings.ToLower("worldpay rhel server")
+	wantCode := strings.ToLower("shared-code")
+	var id int64
+	for _, row := range rows {
+		if strings.ToLower(stringFromAny(row["name"])) == wantName {
+			id = intFromAny(row["id"])
+			break
+		}
+	}
+	if id != 0 {
+		t.Fatalf("expected no match by name, got id %d", id)
+	}
+	// When name is provided, code must not be used as a fallback.
+	if wantName != "" {
+		id = 0
+	} else {
+		for _, row := range rows {
+			if strings.ToLower(stringFromAny(row["code"])) == wantCode {
+				id = intFromAny(row["id"])
+				break
+			}
+		}
+	}
+	if id != 0 {
+		t.Fatalf("code fallback must not apply when name is set, got id %d", id)
+	}
+}
+
+func TestFindDestFormID_doesNotFallBackToCode(t *testing.T) {
+	state := &automationState{
+		catalogCache: &catalogDestCache{
+			formLoaded: true,
+			formByName: map[string]int64{},
+			formByCode: map[string]int64{"shared-code": 99},
+		},
+	}
+	got := state.findDestFormID(nil, "shared-code", "worldpay rhel server")
+	if got != 0 {
+		t.Fatalf("findDestFormID=%d want 0 when name missing on destination", got)
+	}
+}
+
+func TestFormNameMatch_exactOnlyFromOptionTypeFormsList(t *testing.T) {
+	// Shape from GET /api/library/option-type-forms — match row["name"] exactly, never substring.
+	forms := []map[string]interface{}{
+		{"id": 7, "name": "Azure VM Deployment template", "code": "azureforms"},
+		{"id": 8, "name": "worldpay rhel server", "code": "wp-rhel"},
+	}
+	matchName := func(want string) int64 {
+		key := strings.ToLower(strings.TrimSpace(want))
+		for _, row := range forms {
+			if strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == key {
+				return intFromAny(row["id"])
+			}
+		}
+		return 0
+	}
+	if id := matchName("Azure VM Deployment"); id != 0 {
+		t.Fatalf("substring/prefix must not match Azure form, got id %d", id)
+	}
+	if id := matchName("Azure VM Deployment template"); id != 7 {
+		t.Fatalf("exact name id=%d want 7", id)
+	}
+	if id := matchName("worldpay rhel server"); id != 8 {
+		t.Fatalf("exact name id=%d want 8", id)
+	}
+	if id := matchName("worldpay rhel"); id != 0 {
+		t.Fatalf("partial name must not match, got id %d", id)
+	}
+}
