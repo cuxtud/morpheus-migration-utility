@@ -1,6 +1,9 @@
 package migrate
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ProgressEvent is emitted during migration for live UI updates.
 type ProgressEvent struct {
@@ -17,10 +20,45 @@ type ProgressEvent struct {
 type ProgressFunc func(ProgressEvent)
 
 func (s *automationState) reportStep(msg string) {
-	if s == nil || s.progress == nil || msg == "" {
+	if s == nil || msg == "" {
 		return
 	}
-	s.progress(ProgressEvent{Phase: "step", Message: msg})
+	if s.progress != nil {
+		s.progress(ProgressEvent{Phase: "step", Message: msg})
+	}
+}
+
+func (s *automationState) beginItemDebug() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.itemDebugLines = nil
+	s.mu.Unlock()
+}
+
+func (s *automationState) itemDebug(msg string) {
+	if s == nil || strings.TrimSpace(msg) == "" {
+		return
+	}
+	s.mu.Lock()
+	s.itemDebugLines = append(s.itemDebugLines, msg)
+	s.mu.Unlock()
+	s.reportStep(msg)
+}
+
+func (s *automationState) finishItemResult(res ItemResult) ItemResult {
+	if s == nil {
+		return res
+	}
+	s.mu.Lock()
+	lines := s.itemDebugLines
+	s.itemDebugLines = nil
+	s.mu.Unlock()
+	if len(lines) > 0 {
+		res.Details = append(res.Details, lines...)
+	}
+	return res
 }
 
 func itemQueueLabel(it SelectedItem) string {

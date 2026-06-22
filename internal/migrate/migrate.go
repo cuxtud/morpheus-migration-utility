@@ -84,9 +84,10 @@ type ItemResult struct {
 	Type   string `json:"type"`
 	Status string `json:"status"` // "success", "skipped", "error", "blocked", "partial"
 	// Outcome classifies successful writes: "created" (new resource) or "updated" (synced existing).
-	Outcome    string `json:"outcome,omitempty"`
-	Message    string `json:"message"`
-	DurationMs int64  `json:"durationMs,omitempty"`
+	Outcome    string   `json:"outcome,omitempty"`
+	Message    string   `json:"message"`
+	DurationMs int64    `json:"durationMs,omitempty"`
+	Details    []string `json:"details,omitempty"`
 }
 
 // categoryEndpoint maps item types to their create endpoints and payload wrapper keys
@@ -159,6 +160,7 @@ func RunWithProgress(req MigrateRequest, progress ProgressFunc) *MigrateResult {
 	sourceSnap := NewSourceSnapshot(req.SourceDiscovery, req.Items)
 	state := newAutomationState(sourceSnap)
 	state.progress = progress
+	state.httpDebug = req.HttpDebug
 	items := normalizeSelectedItems(req.Items)
 	if src != nil {
 		emit(ProgressEvent{Phase: "preparing", Message: "Expanding migration dependencies…"})

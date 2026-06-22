@@ -230,7 +230,9 @@ func (r *migrationRecorder) runItem(src, dst *morpheus.Client, state *automation
 		Message: fmt.Sprintf("Migrating %s…", label),
 	})
 	itemStart := time.Now()
+	state.beginItemDebug()
 	itemResult := migrateOneItem(migrateItemContext{src: src, dst: dst, state: state, item: item, label: label})
+	itemResult = state.finishItemResult(itemResult)
 	itemResult.DurationMs = time.Since(itemStart).Milliseconds()
 	r.record(idx, total, label, itemResult)
 }
@@ -288,9 +290,11 @@ func (r *migrationRecorder) runItemsParallel(src, dst *morpheus.Client, state *a
 			})
 
 			itemStart := time.Now()
+			state.beginItemDebug()
 			itemResult := migrateOneItem(migrateItemContext{
 				src: src, dst: dst, state: state, item: item, label: label,
 			})
+			itemResult = state.finishItemResult(itemResult)
 			itemResult.DurationMs = time.Since(itemStart).Milliseconds()
 
 			n := int(r.doneCount.Add(1)) + baseIndex
