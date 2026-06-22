@@ -1317,13 +1317,92 @@
   /* Results */
   .result-row {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
   }
+
+  .result-row-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .result-details {
+    margin: 0;
+    padding: 8px 10px 10px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.15);
+    max-height: 320px;
+    overflow: auto;
+  }
+
+  .result-details-collapse,
+  .migration-collapse {
+    margin-left: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(15, 23, 42, 0.45);
+    overflow: hidden;
+  }
+
+  .migration-collapse {
+    margin-left: 0;
+    margin-bottom: 14px;
+  }
+
+  .result-details-collapse summary,
+  .migration-collapse summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    list-style: none;
+    user-select: none;
+  }
+
+  .result-details-collapse summary::-webkit-details-marker,
+  .migration-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .result-details-collapse summary::before,
+  .migration-collapse summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.15s ease;
+    color: var(--accent2);
+  }
+
+  .result-details-collapse[open] summary::before,
+  .migration-collapse[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .result-details-collapse.error summary,
+  .result-details-collapse.blocked summary,
+  .result-details-collapse.partial summary {
+    color: var(--warn);
+  }
+
+  .result-detail-line {
+    margin: 0 0 8px;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text2);
+    font-size: 10px;
+    line-height: 1.45;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .result-detail-line:last-child { margin-bottom: 0; }
 
   .result-row:last-child { border-bottom: none; }
 
@@ -1399,12 +1478,12 @@
   }
 
   .migration-step-log {
-    max-height: 140px;
+    max-height: 240px;
     overflow-y: auto;
-    margin: 8px 0 12px;
+    margin: 0;
     padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: none;
+    border-radius: 0;
     background: rgba(0, 0, 0, 0.2);
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
@@ -2138,7 +2217,7 @@
         <div class="form-group full">
           <label class="checkbox-label">
             <input type="checkbox" id="httpDebug" />
-            Log outgoing HTTP to snapshot server (stderr) — use when debugging migration API calls
+            Verbose migration log (payloads in results + HTTP to server terminal)
           </label>
         </div>
       </div>
@@ -2183,7 +2262,10 @@
           <div class="progress-bar" id="migrationProgress" style="width: 0%"></div>
         </div>
         <div id="migrationCurrentStep" class="migration-current-step"></div>
-        <div id="migrationStepLog" class="migration-step-log hidden"></div>
+        <details id="migrationStepLogWrap" class="migration-collapse hidden">
+          <summary>Migration activity log</summary>
+          <div id="migrationStepLog" class="migration-step-log"></div>
+        </details>
         <div id="migrationQueueWrap" class="hidden">
           <div class="migration-queue-title">Migration queue</div>
           <div id="migrationQueueList" class="migration-queue-list"></div>
@@ -2202,6 +2284,10 @@
           </div>
         </div>
         <div id="migrationDiscoveryContext" class="overview-mini" style="margin-bottom:14px;"></div>
+        <details id="migrationActivityWrap" class="migration-collapse hidden">
+          <summary>Migration activity log</summary>
+          <div id="migrationActivityLog" class="migration-step-log"></div>
+        </details>
 
         <div class="stats-bar migration-stats" style="margin-bottom:16px;">
           <div class="stat-chip">
@@ -2332,8 +2418,10 @@ function resetMigrationProgressUI() {
   document.getElementById('migrationProgress').style.width = '0%';
   document.getElementById('migrationCurrentStep').textContent = '';
   const log = document.getElementById('migrationStepLog');
+  const logWrap = document.getElementById('migrationStepLogWrap');
   log.innerHTML = '';
-  log.classList.add('hidden');
+  logWrap.classList.add('hidden');
+  logWrap.open = false;
   document.getElementById('migrationQueueWrap').classList.add('hidden');
   document.getElementById('migrationQueueList').innerHTML = '';
   const elapsed = document.getElementById('migrationElapsed');
@@ -2346,7 +2434,8 @@ function resetMigrationProgressUI() {
 
 function appendMigrationLogLine(msg, active) {
   const log = document.getElementById('migrationStepLog');
-  log.classList.remove('hidden');
+  const logWrap = document.getElementById('migrationStepLogWrap');
+  logWrap.classList.remove('hidden');
   log.querySelectorAll('.log-line.active').forEach(el => el.classList.remove('active'));
   const line = document.createElement('div');
   line.className = 'log-line' + (active ? ' active' : '');
@@ -6523,6 +6612,16 @@ async function startMigration() {
     document.getElementById('migrationRunning').classList.add('hidden');
     document.getElementById('migrationDone').classList.remove('hidden');
 
+    const stepLog = document.getElementById('migrationStepLog');
+    const activityLog = document.getElementById('migrationActivityLog');
+    const activityWrap = document.getElementById('migrationActivityWrap');
+    if (stepLog && activityLog && activityWrap && stepLog.innerHTML.trim()) {
+      activityLog.innerHTML = stepLog.innerHTML;
+      activityWrap.classList.remove('hidden');
+      const hasProblems = res.failed > 0 || (res.blocked != null && res.blocked > 0) || (res.partial != null && res.partial > 0);
+      activityWrap.open = hasProblems || document.getElementById('httpDebug').checked;
+    }
+
     const skipped = res.results.filter(r => r.status === 'skipped').length;
     document.getElementById('resSuccess').textContent = res.success;
     document.getElementById('resFailed').textContent = res.failed;
@@ -6540,8 +6639,20 @@ async function startMigration() {
     const msg = e.message || String(e);
     document.getElementById('migrationMsg').textContent = `Error: ${msg}`;
     appendMigrationLogLine(msg, false);
-    document.getElementById('migrationStepLog').classList.remove('hidden');
+    const logWrap = document.getElementById('migrationStepLogWrap');
+    logWrap.classList.remove('hidden');
+    logWrap.open = true;
   }
+}
+
+function renderResultDetails(details, status) {
+  if (!details || !details.length) return '';
+  const open = (status === 'error' || status === 'blocked' || status === 'partial') ? ' open' : '';
+  const label = `Debug log (${details.length} line${details.length === 1 ? '' : 's'})`;
+  return `<details class="result-details-collapse ${escapeHtml(status || '')}"${open}>` +
+    `<summary>${escapeHtml(label)}</summary>` +
+    `<div class="result-details">${details.map(d => `<pre class="result-detail-line">${escapeHtml(d)}</pre>`).join('')}</div>` +
+    `</details>`;
 }
 
 function renderResultRows(filter) {
@@ -6551,12 +6662,15 @@ function renderResultRows(filter) {
     ? '<div class="empty" style="padding:30px"><p>No items in this category</p></div>'
     : rows.map(r => `
       <div class="result-row">
-        <div class="result-icon ${r.status}">${icons[r.status]||'?'}</div>
-        <span class="result-name">${escapeHtml(r.name)}</span>
-        <span class="result-type">${escapeHtml(r.type)}</span>
-        ${r.outcome ? `<span class="result-outcome ${r.outcome}">${escapeHtml(r.outcome)}</span>` : ''}
-        ${r.durationMs != null && r.durationMs > 0 ? `<span class="result-duration" title="Migration time">${formatDuration(r.durationMs)}</span>` : ''}
-        ${r.message ? `<span class="result-msg">${escapeHtml(r.message)}</span>` : ''}
+        <div class="result-row-main">
+          <div class="result-icon ${r.status}">${icons[r.status]||'?'}</div>
+          <span class="result-name">${escapeHtml(r.name)}</span>
+          <span class="result-type">${escapeHtml(r.type)}</span>
+          ${r.outcome ? `<span class="result-outcome ${r.outcome}">${escapeHtml(r.outcome)}</span>` : ''}
+          ${r.durationMs != null && r.durationMs > 0 ? `<span class="result-duration" title="Migration time">${formatDuration(r.durationMs)}</span>` : ''}
+          ${r.message ? `<span class="result-msg">${escapeHtml(r.message)}</span>` : ''}
+        </div>
+        ${renderResultDetails(r.details, r.status)}
       </div>`).join('');
 }
 

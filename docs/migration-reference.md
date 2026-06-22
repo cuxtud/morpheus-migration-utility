@@ -1,6 +1,6 @@
 # Migration reference
 
-Current release: **v1.0.6**. See [Release notes](releases.md) for version history.
+Current release: **v1.0.7**. See [Release notes](releases.md) for version history.
 
 ## What gets migrated
 
@@ -8,7 +8,7 @@ Current release: **v1.0.6**. See [Release notes](releases.md) for version histor
 
 | Category | Type | Supported | Notes |
 |----------|------|-----------|-------|
-| Tasks | `task` | ✅ | Git/Ansible integrations resolved on destination (see below) |
+| Tasks | `task` | ✅ | Task type remapped by `taskType.code` (`/api/task-types`); code repos via `/api/options/codeRepositories` |
 | Workflows | `workflow` | ✅ | Related tasks auto-included; task names must resolve on destination |
 | Inputs | `input` | ✅ | Option types; list-backed inputs can create option lists on destination |
 | Option Lists | `optionList` | ✅ | Standalone selection or via inputs/forms; plugin/inline-auth lists may be **blocked** |
@@ -40,7 +40,7 @@ Current release: **v1.0.6**. See [Release notes](releases.md) for version histor
 |----------|------|-----------|-------|
 | Integrations | `integration` | ⚠ | **Discovery only** — not selectable for migration. Repository-backed **tasks** require a matching integration on the destination |
 
-For **Git-backed tasks**, the utility resolves the source integration by id, then matches the destination integration by **integration name** (e.g. `GIT Radu`), not by repository host URL. The destination integration must exist with the same name and a valid SSH key pair.
+For **Git-backed tasks**, `file.repository.id` is a **code repository** option value (from `/api/options/codeRepositories`), not a Git integration id. Each option is labeled `{integration name} - {repository name}` (e.g. `python_examples - cuxtud_python`). Migration matches the same full label on the destination when present, otherwise matches the Git integration by the **prefix** and the repository by the **suffix**.
 
 For **Ansible tasks**, destination integrations are matched by integration name from `ansibleGitId`.
 
@@ -92,6 +92,12 @@ When the name exists on the destination, migration compares field groups and opt
 - **Name missing** → created (or blocked if Morpheus rejects duplicate `code`)
 
 Catalog items always run this form sync; they no longer link to a destination form without checking content.
+
+### Form library inputs (v1.0.7+)
+
+When a form references **library inputs** (`formField: false`), migration ensures each input exists on the destination (creating it with remapped option lists when needed), then attaches it to the form as **`{"id": <destination option-type id>}`** only — in `fieldGroups[].options` and in root `options[]` when the source API returns expanded definitions there.
+
+**Inline form fields** (`formField: true`, e.g. `type: "group"`) remain full field definitions in `options[]`.
 
 ## Outcome statuses
 

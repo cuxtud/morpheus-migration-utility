@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/cuxtud/morpheus-migration-utility/internal/morpheus"
 )
 
 func TestSortItemsForMigration_tasksBeforeWorkflows(t *testing.T) {
@@ -176,9 +178,21 @@ func TestIsFormLibraryInputRef(t *testing.T) {
 	if isFormLibraryInputRef(inline) {
 		t.Fatal("inline form field should not be library ref")
 	}
+	group := map[string]interface{}{
+		"type": "group", "fieldLabel": "Group", "fieldName": "groups",
+	}
+	if isFormLibraryInputRef(group) {
+		t.Fatal("inline group field should not be library ref")
+	}
 	lib := map[string]interface{}{"formField": false, "name": "Postgres Version", "code": "pgsqlVersion"}
 	if !isFormLibraryInputRef(lib) {
 		t.Fatal("field group library input expected")
+	}
+	expanded := map[string]interface{}{
+		"formField": false, "name": "Request Raised For Options", "code": "raised_for", "type": "radio",
+	}
+	if !isFormLibraryInputRef(expanded) {
+		t.Fatal("expanded root library input expected")
 	}
 }
 
@@ -223,8 +237,105 @@ func TestRemapConfigFieldRefs_crossFieldUUIDs(t *testing.T) {
 	}
 }
 
+func TestRemapTaskTypeForDestination_usesDestIDByCode(t *testing.T) {
+	state := newAutomationState(nil)
+	state.destTaskTypeByCode = map[string]map[string]interface{}{
+		"jythontask": {"id": 12, "code": "jythonTask", "name": "Python Script"},
+		"vro":        {"id": 10, "code": "vro", "name": "vRealize Orchestrator Workflow"},
+	}
+	task := map[string]interface{}{
+		"name": "create_cmdb_ci_relation",
+		"taskType": map[string]interface{}{
+			"id":   12,
+			"code": "jythonTask",
+			"name": "Python Script",
+		},
+	}
+	if err := remapTaskTypeForDestination(nil, state, task); err != nil {
+		t.Fatal(err)
+	}
+	tt, _ := task["taskType"].(map[string]interface{})
+	if intFromAny(tt["id"]) != 12 {
+		t.Fatalf("id=%v want destination jythonTask id 12", tt["id"])
+	}
+	if stringFromAny(tt["code"]) != "jythonTask" {
+		t.Fatalf("code=%v", tt["code"])
+	}
+}
+
+func TestRemapTaskTypeForDestination_avoidsWrongIDWhenCodesDiffer(t *testing.T) {
+	state := newAutomationState(nil)
+	// On destination, id 12 might be a different type — lookup must be by code.
+	state.destTaskTypeByCode = map[string]map[string]interface{}{
+		"jythontask": {"id": 99, "code": "jythonTask", "name": "Python Script"},
+		"vro":        {"id": 10, "code": "vro", "name": "vRealize Orchestrator Workflow"},
+	}
+	task := map[string]interface{}{
+		"name": "create_cmdb_ci_relation",
+		"taskType": map[string]interface{}{
+			"id":   12,
+			"code": "jythonTask",
+			"name": "Python Script",
+		},
+	}
+	if err := remapTaskTypeForDestination(nil, state, task); err != nil {
+		t.Fatal(err)
+	}
+	tt, _ := task["taskType"].(map[string]interface{})
+	if intFromAny(tt["id"]) != 99 {
+		t.Fatalf("id=%v want 99 (dest jythonTask), not source id 12", tt["id"])
+	}
+}
+
+func TestParseTaskGETRepositoryBinding_missingFile(t *testing.T) {
+	body := []byte(`{"task":{"id":1,"name":"t","taskType":{"code":"jythonTask"}}}`)
+	st, rid, filePresent, ok := parseTaskGETRepositoryBinding(body)
+	if !ok {
+		t.Fatal("expected parse ok")
+	}
+	if filePresent {
+		t.Fatal("file should be absent")
+	}
+	if st != "" || rid != 0 {
+		t.Fatalf("st=%q rid=%d", st, rid)
+	}
+}
+
+func TestIntegrationNameFromCodeRepositoryName(t *testing.T) {
+	full := "python_examples - cuxtud_python"
+	if got := codeRepositoryIntegrationName(full); got != "python_examples" {
+		t.Fatalf("integration=%q want python_examples", got)
+	}
+	if got := codeRepositoryEntryName(full); got != "cuxtud_python" {
+		t.Fatalf("entry=%q want cuxtud_python", got)
+	}
+}
+
+func TestParseCodeRepositoryOptions(t *testing.T) {
+	body := []byte(`{"success":true,"data":[{"name":"python_examples - cuxtud_python","value":3},{"name":"wiki - Wiki Helm","value":2}]}`)
+	opts, err := parseCodeRepositoryOptions(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt, ok := findCodeRepositoryByValue(opts, 3)
+	if !ok || opt.Name != "python_examples - cuxtud_python" {
+		t.Fatalf("opt=%+v ok=%v", opt, ok)
+	}
+}
+
+func TestFindCodeRepositoryByIntegration(t *testing.T) {
+	opts := []codeRepositoryOption{
+		{Name: "python_examples - python", Value: 9},
+		{Name: "python_examples - cuxtud_python", Value: 3},
+	}
+	opt, ok := findCodeRepositoryByIntegration(opts, "python_examples", "cuxtud_python")
+	if !ok || opt.Value != 3 {
+		t.Fatalf("opt=%+v", opt)
+	}
+}
+
 func TestResolveSourceGitIntegrationName_usesPlainName(t *testing.T) {
-	name, err := resolveSourceGitIntegrationName(nil, map[string]interface{}{
+	name, err := resolveSourceGitIntegrationName(nil, nil, map[string]interface{}{
 		"id":   42,
 		"name": "GIT Radu",
 	})
@@ -236,8 +347,42 @@ func TestResolveSourceGitIntegrationName_usesPlainName(t *testing.T) {
 	}
 }
 
+func TestResolveSourceGitIntegrationName_prefersNameOverBrokenIDLookup(t *testing.T) {
+	name, err := resolveSourceGitIntegrationName(nil, nil, map[string]interface{}{
+		"id":   8,
+		"name": "GIT Radu",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "GIT Radu" {
+		t.Fatalf("got %q want GIT Radu", name)
+	}
+}
+
+func TestResolveIntegrationNameByID_fromSnapshot(t *testing.T) {
+	snap := NewSourceSnapshot(&morpheus.DiscoveryResult{
+		Categories: []morpheus.CategoryGroup{{
+			Name: "Integrations",
+			Items: []morpheus.DiscoveryItem{{
+				ID:      8,
+				Name:    "GIT Radu",
+				Type:    "integration",
+				RawJSON: `{"id":8,"name":"GIT Radu","integrationType":{"code":"git"}}`,
+			}},
+		}},
+	}, nil)
+	name, err := resolveIntegrationNameByID(nil, snap, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "GIT Radu" {
+		t.Fatalf("got %q", name)
+	}
+}
+
 func TestResolveSourceGitIntegrationName_rejectsRepoURLWithoutSource(t *testing.T) {
-	_, err := resolveSourceGitIntegrationName(nil, map[string]interface{}{
+	_, err := resolveSourceGitIntegrationName(nil, nil, map[string]interface{}{
 		"id":   42,
 		"name": "https://github.com/Radu-Sipetan_worldpay/morpheus_tasks.git",
 	})

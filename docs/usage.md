@@ -48,15 +48,15 @@ Download discovery JSON from the select step, or load a previous export from **C
 - **Instance types** — related **layouts**, **node types**, and **workflows** can be auto-included. **System** (Morpheus-seeded) instance types are excluded from discovery and skipped if referenced directly.
 - **Workflows** — related **tasks** can be auto-included.
 - **Catalog items** — related **forms**, **workflows**, and user **instance types** can be auto-included. Catalogs using system instance types resolve against destination built-ins.
-- **Forms** — matched on the destination by **exact form name** (`optionTypeForms[].name`); field content is compared and **updated** when it differs. Related **inputs** and **option lists** can be auto-included or created on the destination.
+- **Forms** — matched on the destination by **exact form name** (`optionTypeForms[].name`); field content is compared and **updated** when it differs. Library inputs are linked by destination id; related **option lists** are created or remapped when migrating inputs.
 - **Option lists** — can be migrated by selecting the **Option Lists** category directly, or created when migrating list-backed inputs.
 - **Node types** — **virtual images** are matched on the destination by **name**; missing images are **blocked** with a clear message.
-- **Tasks** — repository-backed tasks require a Git integration on the destination with the **same integration name** as on the source (not the repository URL). SSH key pairs must exist on the destination.
+- **Tasks** — repository-backed tasks require a Git integration on the destination with the **same integration name** as on the source (not the repository URL).
 - **Integrations** — appear in discovery for inventory and relations but are **not migrated**; create matching integrations on the destination before migrating dependent tasks.
 - **Parallel waves** — items in the same dependency tier migrate concurrently (default 4 workers); multiple catalog items can migrate in parallel after dependencies complete.
 
 See [Migration reference](migration-reference.md) for the full per-type matrix.
 
-## HTTP debug
+## Verbose migration log
 
-On the destination step, enable **Log outgoing HTTP** to write Morpheus API calls to the server stderr (useful when diagnosing migration failures).
+On the destination step, enable **Verbose migration log** to capture step-by-step details in the results UI (collapsible per item and activity log on the results page). Full HTTP request bodies are also written to the server terminal — useful when diagnosing form or task migration failures.

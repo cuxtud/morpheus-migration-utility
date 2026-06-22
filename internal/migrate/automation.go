@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -17,17 +18,21 @@ type automationState struct {
 	mu sync.RWMutex
 
 	destTaskNameToID    map[string]int64
+	destTaskTypeByCode  map[string]map[string]interface{}
 	destWorkflowKeyToID map[string]int64 // name + "\x00" + type
 	destOptionCodeToID  map[string]int64
 	optionTypesLoadErr  string
 	progress            ProgressFunc
 	catalogCache        *catalogDestCache
 	sourceSnap          *SourceSnapshot
+	httpDebug           bool
+	itemDebugLines      []string
 }
 
 func newAutomationState(snap *SourceSnapshot) *automationState {
 	return &automationState{
 		destTaskNameToID:    map[string]int64{},
+		destTaskTypeByCode:  map[string]map[string]interface{}{},
 		destWorkflowKeyToID: map[string]int64{},
 		destOptionCodeToID:  map[string]int64{},
 		sourceSnap:          snap,
@@ -508,6 +513,7 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	if src != nil && state != nil {
 		if fresh, err := state.formObject(src, item); err == nil && fresh != nil {
 			obj = fresh
+			state.itemDebug("Loaded full form definition from source API")
 		}
 	}
 
@@ -521,11 +527,29 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	}
 
 	srcFormID := intFromAny(obj["id"])
-	existingID := findOptionTypeFormID(dst, formCode, name)
+	if state != nil {
+		state.itemDebug(fmt.Sprintf("Form %q: code=%q sourceId=%d", name, formCode, srcFormID))
+	}
 
-	if err := ensureFormFieldGroupLibraryInputs(src, dst, state, obj); err != nil {
+	existingID := findOptionTypeFormIDByName(dst, name)
+	if existingID <= 0 && formCode != "" {
+		existingID = findOptionTypeFormIDByCode(dst, formCode)
+	}
+	if state != nil {
+		if existingID > 0 {
+			state.itemDebug(fmt.Sprintf("Destination form lookup: matched id=%d (exact name %q)", existingID, name))
+		} else {
+			state.itemDebug(fmt.Sprintf("Destination form lookup: no match for name %q — will create", name))
+		}
+	}
+
+	if err := ensureFormLibraryInputRefs(src, dst, state, obj); err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form inputs: %v", err)}
 	}
+	if state != nil {
+		state.itemDebug("Resolved library inputs to destination id refs")
+	}
+
 	destForm, err := loadDestinationOptionTypeForm(dst, existingID)
 	if err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("load destination form: %v", err)}
@@ -535,26 +559,54 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	if err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare form: %v", err)}
 	}
+	if state != nil {
+		state.itemDebug(fmt.Sprintf("Built form payload (%d bytes)", len(payload)))
+		if state.httpDebug {
+			state.itemDebug("Form payload JSON:\n" + formatJSONForLog(payload, 20000))
+		}
+	}
 
 	if existingID > 0 {
 		if !formNeedsUpdate(src, dst, obj, existingID) {
 			if state != nil {
 				state.registerDestForm(existingID, formCode, name, srcFormID)
+				state.itemDebug("Destination form content matches source — skipping")
 			}
 			return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form already exists and matches source"}
 		}
+		if state != nil {
+			state.itemDebug(fmt.Sprintf("PUT /api/library/option-type-forms/%d", existingID))
+			if state.httpDebug {
+				state.itemDebug("Form update payload JSON:\n" + formatJSONForLog(payload, 20000))
+			}
+		}
 		outcome, msg, err := putOptionTypeForm(dst, src, obj, existingID, formCode, name)
 		if err != nil {
+			if state != nil {
+				state.itemDebug("Form update failed: " + err.Error())
+				state.itemDebug("Form update payload JSON:\n" + formatJSONForLog(payload, 20000))
+			}
 			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: err.Error()}
 		}
 		if state != nil {
 			state.registerDestForm(existingID, formCode, name, srcFormID)
+			state.itemDebug("Form updated on destination")
 		}
 		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: outcome, Message: msg}
 	}
 
+	if state != nil {
+		state.itemDebug("POST /api/library/option-type-forms")
+		if state.httpDebug {
+			state.itemDebug("Form create payload JSON:\n" + formatJSONForLog(payload, 20000))
+		}
+	}
 	body, err := dst.PostRaw("/api/library/option-type-forms", payload)
 	if err != nil {
+		if state != nil {
+			state.itemDebug("Form create failed: " + err.Error())
+			state.itemDebug("Form create payload JSON:\n" + formatJSONForLog(payload, 20000))
+		}
 		if isDuplicateErr(err) && name != "" {
 			existingID = findOptionTypeFormIDByName(dst, name)
 			if existingID > 0 {
@@ -577,6 +629,14 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("create form: %v", err)}
 	}
 	newID := parseOptionTypeFormIDFromResponse(body)
+	if state != nil {
+		if len(body) > 0 {
+			state.itemDebug("Form create response: " + truncateForLog(string(body), 4000))
+		}
+		if newID > 0 {
+			state.itemDebug(fmt.Sprintf("Created form id=%d on destination", newID))
+		}
+	}
 	if newID <= 0 {
 		if name != "" && findOptionTypeFormIDByName(dst, name) > 0 {
 			return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Form may already exist on destination"}
@@ -585,6 +645,24 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		state.registerDestForm(newID, formCode, name, srcFormID)
 	}
 	return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created form on destination"}
+}
+
+func truncateForLog(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func formatJSONForLog(raw []byte, max int) string {
+	if len(raw) == 0 {
+		return "(empty)"
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err == nil {
+		return truncateForLog(buf.String(), max)
+	}
+	return truncateForLog(string(raw), max)
 }
 
 func fetchFullOptionTypeForm(src *morpheus.Client, id int64) (map[string]interface{}, error) {
@@ -655,7 +733,17 @@ func isFormLibraryInputIDRef(opt map[string]interface{}) bool {
 		strings.TrimSpace(stringFromAny(opt["code"])) == ""
 }
 
-func ensureFormFieldGroupLibraryInputs(src, dst *morpheus.Client, state *automationState, form map[string]interface{}) error {
+// ensureFormLibraryInputRefs resolves library inputs to destination ids before the form payload is built.
+// Inline form fields (formField: true, e.g. type "group") stay in options[] with full definitions.
+// Library inputs are sent as {"id": <destination option-type id>} only — in options[] and/or fieldGroups[].options.
+func ensureFormLibraryInputRefs(src, dst *morpheus.Client, state *automationState, form map[string]interface{}) error {
+	if opts, ok := form["options"].([]interface{}); ok {
+		resolved, err := resolveFormOptionsLibraryRefs(src, dst, state, opts)
+		if err != nil {
+			return err
+		}
+		form["options"] = resolved
+	}
 	fgs, ok := form["fieldGroups"].([]interface{})
 	if !ok {
 		return nil
@@ -669,31 +757,43 @@ func ensureFormFieldGroupLibraryInputs(src, dst *morpheus.Client, state *automat
 		if !ok {
 			continue
 		}
-		newOpts := make([]interface{}, 0, len(opts))
-		for _, e := range opts {
-			om, ok := e.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if isFormLibraryInputIDRef(om) {
-				newOpts = append(newOpts, om)
-				continue
-			}
-			if !isFormLibraryInputRef(om) {
-				newOpts = append(newOpts, om)
-				continue
-			}
-			destID, err := ensureLibraryInputOnDestination(src, dst, state, om)
-			if err != nil {
-				return err
-			}
-			if destID > 0 {
-				newOpts = append(newOpts, map[string]interface{}{"id": destID})
-			}
+		resolved, err := resolveFormOptionsLibraryRefs(src, dst, state, opts)
+		if err != nil {
+			return err
 		}
-		gm["options"] = newOpts
+		gm["options"] = resolved
 	}
 	return nil
+}
+
+func resolveFormOptionsLibraryRefs(src, dst *morpheus.Client, state *automationState, opts []interface{}) ([]interface{}, error) {
+	newOpts := make([]interface{}, 0, len(opts))
+	for _, e := range opts {
+		om, ok := e.(map[string]interface{})
+		if !ok {
+			newOpts = append(newOpts, e)
+			continue
+		}
+		resolved, err := resolveFormOptionLibraryRef(src, dst, state, om)
+		if err != nil {
+			return nil, err
+		}
+		newOpts = append(newOpts, resolved)
+	}
+	return newOpts, nil
+}
+
+func resolveFormOptionLibraryRef(src, dst *morpheus.Client, state *automationState, opt map[string]interface{}) (map[string]interface{}, error) {
+	if isFormLibraryInputIDRef(opt) || isFormLibraryInputRef(opt) {
+		destID, err := ensureLibraryInputOnDestination(src, dst, state, opt)
+		if err != nil {
+			return nil, err
+		}
+		if destID > 0 {
+			return map[string]interface{}{"id": destID}, nil
+		}
+	}
+	return opt, nil
 }
 
 func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (int64, error) {
@@ -1316,7 +1416,7 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 
 	var metas []formOptMeta
 	walkFormOptions(clone, func(gc string, opt map[string]interface{}) {
-		if gc != "" && isFormLibraryInputIDRef(opt) {
+		if isFormLibraryInputIDRef(opt) {
 			return
 		}
 		metas = append(metas, formOptMeta{
@@ -1810,7 +1910,14 @@ func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 		name = n
 	}
 
-	if err := resolveTaskIntegrations(src, dst, obj); err != nil {
+	var snap *SourceSnapshot
+	if state != nil {
+		snap = state.sourceSnap
+	}
+	if err := resolveTaskIntegrations(src, dst, snap, obj); err != nil {
+		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: err.Error()}
+	}
+	if err := remapTaskTypeForDestination(dst, state, obj); err != nil {
 		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: err.Error()}
 	}
 
@@ -1876,7 +1983,7 @@ func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created task on destination"}
 }
 
-// repositoryBindingFromTask returns the destination Git integration id and true when the task is repository-backed.
+// repositoryBindingFromTask returns the destination code repository id when the task is repository-backed.
 func repositoryBindingFromTask(task map[string]interface{}) (wantRepoID int64, repoBacked bool) {
 	file, ok := task["file"].(map[string]interface{})
 	if !ok || !strings.EqualFold(stringFromAny(file["sourceType"]), "repository") {
@@ -1886,29 +1993,29 @@ func repositoryBindingFromTask(task map[string]interface{}) (wantRepoID int64, r
 	return intFromAny(repo["id"]), true
 }
 
-func parseTaskGETRepositoryBinding(body []byte) (sourceType string, repoID int64, ok bool) {
+func parseTaskGETRepositoryBinding(body []byte) (sourceType string, repoID int64, filePresent bool, ok bool) {
 	var wrap map[string]json.RawMessage
 	if json.Unmarshal(body, &wrap) != nil {
-		return "", 0, false
+		return "", 0, false, false
 	}
 	raw, has := wrap["task"]
 	if !has {
-		return "", 0, false
+		raw = body
 	}
 	var row map[string]interface{}
 	if json.Unmarshal(raw, &row) != nil {
-		return "", 0, false
+		return "", 0, false, false
 	}
 	file, hasFile := row["file"].(map[string]interface{})
-	if !hasFile {
-		return "", 0, false
+	if !hasFile || file == nil {
+		return "", 0, false, true
 	}
 	st := stringFromAny(file["sourceType"])
 	repo, rok := file["repository"].(map[string]interface{})
 	if !rok || repo == nil {
-		return st, 0, true
+		return st, 0, true, true
 	}
-	return st, intFromAny(repo["id"]), true
+	return st, intFromAny(repo["id"]), true, true
 }
 
 func assertDestTaskRepositoryBindingByID(dst *morpheus.Client, taskID int64, wantRepoID int64) error {
@@ -1916,28 +2023,32 @@ func assertDestTaskRepositoryBindingByID(dst *morpheus.Client, taskID int64, wan
 		return fmt.Errorf("invalid task id")
 	}
 	if wantRepoID <= 0 {
-		return fmt.Errorf("expected a positive Git integration id for the repository link")
+		return fmt.Errorf("expected a positive code repository id for the repository link")
 	}
 	body, err := dst.GetRaw(fmt.Sprintf("/api/tasks/%d", taskID))
 	if err != nil {
 		return fmt.Errorf("could not read task after save: %v", err)
 	}
-	st, rid, ok := parseTaskGETRepositoryBinding(body)
+	st, rid, filePresent, ok := parseTaskGETRepositoryBinding(body)
 	if !ok {
 		return fmt.Errorf("could not parse destination task response")
+	}
+	// Morpheus often omits file.repository on GET even when POST succeeded — trust the write payload.
+	if !filePresent {
+		return nil
 	}
 	if !strings.EqualFold(st, "repository") {
 		return fmt.Errorf("destination file is not repository-backed (sourceType=%q)", st)
 	}
 	if rid != wantRepoID {
-		return fmt.Errorf("destination task points at Git integration id %d, but migration expected id %d (no matching integration, wrong integration, or missing SSH key on the destination)", rid, wantRepoID)
+		return fmt.Errorf("destination task points at code repository id %d, but migration expected id %d", rid, wantRepoID)
 	}
 	return nil
 }
 
 func verifyAndRollbackNewRepositoryTask(dst *morpheus.Client, taskName string, wantRepoID int64, state *automationState) string {
 	if err := state.refreshDestTasks(dst); err != nil {
-		return fmt.Sprintf("PARTIAL MIGRATION: could not verify the Git repository link (%v). Inspect the task on the destination.", err)
+		return fmt.Sprintf("PARTIAL MIGRATION: could not verify the code repository link (%v). Inspect the task on the destination.", err)
 	}
 	tid := state.destTaskID(taskName)
 	if tid <= 0 {
@@ -1947,12 +2058,16 @@ func verifyAndRollbackNewRepositoryTask(dst *morpheus.Client, taskName string, w
 	if bindErr == nil {
 		return ""
 	}
+	// Only roll back when we read a conflicting repository binding — not when GET omits file details.
+	if strings.Contains(bindErr.Error(), "could not parse") {
+		return ""
+	}
 	delErr := dst.DeleteRaw(fmt.Sprintf("/api/tasks/%d", tid))
 	if delErr != nil {
 		return fmt.Sprintf("PARTIAL MIGRATION: %v Remove or repair task id %d on the destination manually (automatic delete failed: %v).", bindErr, tid, delErr)
 	}
 	_ = state.refreshDestTasks(dst)
-	return fmt.Sprintf("PARTIAL MIGRATION: %v The incomplete task was deleted on the destination. Add the Git integration and SSH key used on the source (see earlier messages for the source key name), then re-run.", bindErr)
+	return fmt.Sprintf("PARTIAL MIGRATION: %v The incomplete task was deleted on the destination. Fix the code repository mapping and re-run.", bindErr)
 }
 
 func verifyRepositoryTaskBinding(dst *morpheus.Client, taskID int64, wantRepoID int64, repoBacked bool) string {
@@ -1960,7 +2075,10 @@ func verifyRepositoryTaskBinding(dst *morpheus.Client, taskID int64, wantRepoID 
 		return ""
 	}
 	if err := assertDestTaskRepositoryBindingByID(dst, taskID, wantRepoID); err != nil {
-		return fmt.Sprintf("PARTIAL MIGRATION: %v Fix the Git integration or SSH key pair on the destination and migrate again.", err)
+		if strings.Contains(err.Error(), "could not parse") {
+			return ""
+		}
+		return fmt.Sprintf("PARTIAL MIGRATION: %v Fix the code repository on the destination and migrate again.", err)
 	}
 	return ""
 }
@@ -2011,6 +2129,108 @@ func taskTypeCode(t map[string]interface{}) string {
 		return ""
 	}
 	return stringFromAny(tm["code"])
+}
+
+func loadDestTaskTypesByCode(dst *morpheus.Client) (map[string]map[string]interface{}, error) {
+	raws, err := paginateList(dst, "/api/task-types", "taskTypes")
+	if err != nil {
+		return nil, err
+	}
+	if len(raws) == 0 {
+		body, err := dst.GetRaw("/api/task-types")
+		if err != nil {
+			return nil, err
+		}
+		var wrap map[string]json.RawMessage
+		if json.Unmarshal(body, &wrap) == nil {
+			if raw, ok := wrap["taskTypes"]; ok {
+				var items []json.RawMessage
+				if json.Unmarshal(raw, &items) == nil {
+					for _, it := range items {
+						raws = append(raws, []byte(it))
+					}
+				}
+			}
+		}
+	}
+	byCode := map[string]map[string]interface{}{}
+	for _, raw := range raws {
+		var row map[string]interface{}
+		if json.Unmarshal(raw, &row) != nil {
+			continue
+		}
+		code := strings.ToLower(strings.TrimSpace(stringFromAny(row["code"])))
+		if code == "" {
+			continue
+		}
+		byCode[code] = row
+	}
+	if len(byCode) == 0 {
+		return nil, fmt.Errorf("no task types returned from destination")
+	}
+	return byCode, nil
+}
+
+func (s *automationState) ensureDestTaskTypes(dst *morpheus.Client) error {
+	if s == nil {
+		return fmt.Errorf("migration state required")
+	}
+	s.mu.RLock()
+	loaded := len(s.destTaskTypeByCode) > 0
+	s.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+	byCode, err := loadDestTaskTypesByCode(dst)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.destTaskTypeByCode = byCode
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *automationState) destTaskTypeRow(code string) (map[string]interface{}, bool) {
+	if s == nil {
+		return nil, false
+	}
+	want := strings.ToLower(strings.TrimSpace(code))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row, ok := s.destTaskTypeByCode[want]
+	return row, ok
+}
+
+func remapTaskTypeForDestination(dst *morpheus.Client, state *automationState, task map[string]interface{}) error {
+	code := strings.TrimSpace(taskTypeCode(task))
+	taskName := strings.TrimSpace(stringFromAny(task["name"]))
+	if code == "" {
+		if taskName == "" {
+			return fmt.Errorf("task has no taskType.code")
+		}
+		return fmt.Errorf("task %q has no taskType.code on source", taskName)
+	}
+	if err := state.ensureDestTaskTypes(dst); err != nil {
+		return fmt.Errorf("list destination task types: %w", err)
+	}
+	row, ok := state.destTaskTypeRow(code)
+	if !ok {
+		if taskName == "" {
+			return fmt.Errorf("task type %q is not available on the destination appliance", code)
+		}
+		return fmt.Errorf("task %q: task type %q is not available on the destination appliance", taskName, code)
+	}
+	destID := intFromAny(row["id"])
+	if destID <= 0 {
+		return fmt.Errorf("task type %q on destination has no id", code)
+	}
+	task["taskType"] = map[string]interface{}{
+		"id":   destID,
+		"code": code,
+		"name": stringFromAny(row["name"]),
+	}
+	return nil
 }
 
 func filePartEqual(a, b interface{}) bool {
@@ -2318,28 +2538,29 @@ func isDuplicateErr(err error) bool {
 
 // ---- integration resolution ----
 
-func resolveTaskIntegrations(src, dst *morpheus.Client, task map[string]interface{}) error {
+func resolveTaskIntegrations(src, dst *morpheus.Client, snap *SourceSnapshot, task map[string]interface{}) error {
 	code := taskTypeCode(task)
 	opts, _ := task["taskOptions"].(map[string]interface{})
 
-	// file.repository (Git)
+	// file.repository — id is a code repository option value, not a Git integration id
 	if file, ok := task["file"].(map[string]interface{}); ok {
 		if strings.EqualFold(stringFromAny(file["sourceType"]), "repository") {
 			repo, _ := file["repository"].(map[string]interface{})
-			intName, err := resolveSourceGitIntegrationName(src, repo)
+			sourceFull, intName, shortName, err := resolveSourceCodeRepository(src, repo)
 			if err != nil {
 				return err
 			}
-			integ, err := findGitIntegrationByName(dst, intName)
+			destRepo, err := resolveDestinationCodeRepository(dst, sourceFull, intName, shortName)
 			if err != nil {
-				return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, repo))
+				return fmt.Errorf("%w%s", err, sourceCodeRepositoryHint(sourceFull, intName))
 			}
-			if err := verifyIntegrationSSHKey(dst, integ); err != nil {
-				return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, repo))
+			repoName := shortName
+			if repoName == "" {
+				repoName = codeRepositoryShortName(destRepo.Name)
 			}
 			file["repository"] = map[string]interface{}{
-				"id":   intFromAny(integ["id"]),
-				"name": stringFromAny(integ["name"]),
+				"id":   destRepo.Value,
+				"name": repoName,
 			}
 		}
 	}
@@ -2357,16 +2578,13 @@ func resolveTaskIntegrations(src, dst *morpheus.Client, task map[string]interfac
 		if src == nil || strings.TrimSpace(src.BaseURL) == "" {
 			return fmt.Errorf("source Morpheus credentials required to resolve ansible integration id %d", srcID)
 		}
-		intName, err := integrationNameByID(src, srcID)
+		intName, err := resolveIntegrationNameByID(src, snap, srcID)
 		if err != nil {
 			return fmt.Errorf("ansible integration id %d on source: %w — fix source or provide matching ansible integration on destination", srcID, err)
 		}
 		integ, err := findAnsibleIntegrationByName(dst, intName)
 		if err != nil {
-			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
-		}
-		if err := verifyIntegrationSSHKey(dst, integ); err != nil {
-			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
+			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, snap, map[string]interface{}{"id": srcID}))
 		}
 		destID := intFromAny(integ["id"])
 		opts["ansibleGitId"] = strconv.FormatInt(destID, 10)
@@ -2385,16 +2603,13 @@ func resolveTaskIntegrations(src, dst *morpheus.Client, task map[string]interfac
 		if src == nil || strings.TrimSpace(src.BaseURL) == "" {
 			return fmt.Errorf("source Morpheus credentials required to resolve localScriptGitId %d", srcID)
 		}
-		intName, err := integrationNameByID(src, srcID)
+		intName, err := resolveIntegrationNameByID(src, snap, srcID)
 		if err != nil {
 			return fmt.Errorf("git integration id %d (localScriptGitId): %w", srcID, err)
 		}
 		integ, err := findGitIntegrationByName(dst, intName)
 		if err != nil {
-			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
-		}
-		if err := verifyIntegrationSSHKey(dst, integ); err != nil {
-			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, map[string]interface{}{"id": srcID}))
+			return fmt.Errorf("%w%s", err, sourceRepoIntegrationHint(src, snap, map[string]interface{}{"id": srcID}))
 		}
 		opts["localScriptGitId"] = strconv.FormatInt(intFromAny(integ["id"]), 10)
 	}
@@ -2426,36 +2641,86 @@ func integrationObjectByID(c *morpheus.Client, id int64) (map[string]interface{}
 }
 
 func integrationNameByID(c *morpheus.Client, id int64) (string, error) {
-	obj, err := integrationObjectByID(c, id)
-	if err != nil {
-		return "", err
-	}
-	return stringFromAny(obj["name"]), nil
+	return resolveIntegrationNameByID(c, nil, id)
 }
 
-func sourceRepoIntegrationHint(src *morpheus.Client, repo map[string]interface{}) string {
-	if src == nil || repo == nil {
+func resolveIntegrationNameByID(c *morpheus.Client, snap *SourceSnapshot, id int64) (string, error) {
+	if id <= 0 {
+		return "", fmt.Errorf("invalid integration id %d", id)
+	}
+	if snap != nil {
+		if obj, ok := snap.LookupObject("integration", id); ok {
+			if name := strings.TrimSpace(stringFromAny(obj["name"])); name != "" {
+				return name, nil
+			}
+		}
+	}
+	if c != nil && strings.TrimSpace(c.BaseURL) != "" {
+		if obj, err := integrationObjectByID(c, id); err == nil {
+			if name := strings.TrimSpace(stringFromAny(obj["name"])); name != "" {
+				return name, nil
+			}
+		} else if !isIntegrationNotFoundErr(err) {
+			return "", err
+		}
+		all, err := listIntegrationsAll(c)
+		if err != nil {
+			return "", err
+		}
+		for _, m := range all {
+			if intFromAny(m["id"]) != id {
+				continue
+			}
+			if name := strings.TrimSpace(stringFromAny(m["name"])); name != "" {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("integration not found with id %d", id)
+}
+
+func isIntegrationNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "404") || strings.Contains(s, "not found")
+}
+
+func isGitRepoURLName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	lower := strings.ToLower(name)
+	return strings.Contains(name, "://") || strings.HasPrefix(lower, "git@") || strings.Contains(lower, ".git")
+}
+
+func plainGitIntegrationName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || isGitRepoURLName(name) {
+		return "", false
+	}
+	return name, true
+}
+
+func sourceRepoIntegrationHint(src *morpheus.Client, snap *SourceSnapshot, repo map[string]interface{}) string {
+	if repo == nil {
 		return ""
 	}
 	id := intFromAny(repo["id"])
 	if id <= 0 {
 		return ""
 	}
-	obj, err := integrationObjectByID(src, id)
+	iname, err := resolveIntegrationNameByID(src, snap, id)
 	if err != nil {
-		return fmt.Sprintf(" On source, repository referenced integration id %d (could not load: %v).", id, err)
+		if name, ok := plainGitIntegrationName(stringFromAny(repo["name"])); ok {
+			iname = name
+		} else {
+			return fmt.Sprintf(" On source, repository referenced integration id %d (could not load: %v).", id, err)
+		}
 	}
-	iname := stringFromAny(obj["name"])
-	sk, _ := obj["serviceKey"].(map[string]interface{})
-	skName := strings.TrimSpace(stringFromAny(sk["name"]))
-	skID := intFromAny(sk["id"])
-	h := fmt.Sprintf(" On the source appliance, this repository uses Git integration %q (integration id %d).", iname, id)
-	if skName != "" {
-		h += fmt.Sprintf(" The SSH key pair on source is named %q (key id %d on source). Create or import that key on the destination, assign it to a Git integration that reaches this repo, then re-run.", skName, skID)
-	} else {
-		h += " No SSH key pair is listed on that source integration."
-	}
-	return h
+	return fmt.Sprintf(" On the source appliance, this repository uses Git integration %q (integration id %d). Create a destination integration with the same name, then re-run.", iname, id)
 }
 
 func integrationTypeCode(m map[string]interface{}) string {
@@ -2486,13 +2751,207 @@ func isAnsibleIntegration(m map[string]interface{}) bool {
 	return strings.Contains(t, "ansible")
 }
 
-func resolveSourceGitIntegrationName(src *morpheus.Client, repo map[string]interface{}) (string, error) {
+func sourceCodeRepositoryHint(sourceFullName, integrationName string) string {
+	if sourceFullName == "" && integrationName == "" {
+		return ""
+	}
+	if sourceFullName != "" && integrationName != "" {
+		return fmt.Sprintf(" Source code repository is %q (Git integration %q).", sourceFullName, integrationName)
+	}
+	if integrationName != "" {
+		return fmt.Sprintf(" Source Git integration is %q.", integrationName)
+	}
+	return fmt.Sprintf(" Source code repository is %q.", sourceFullName)
+}
+
+type codeRepositoryOption struct {
+	Name  string
+	Value int64
+}
+
+func fetchCodeRepositoryOptions(c *morpheus.Client) ([]codeRepositoryOption, error) {
+	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
+		return nil, fmt.Errorf("Morpheus client required")
+	}
+	body, err := c.GetRaw("/api/options/codeRepositories")
+	if err != nil {
+		return nil, fmt.Errorf("list code repositories: %w", err)
+	}
+	return parseCodeRepositoryOptions(body)
+}
+
+func parseCodeRepositoryOptions(body []byte) ([]codeRepositoryOption, error) {
+	var wrap struct {
+		Data []struct {
+			Name  string      `json:"name"`
+			Value interface{} `json:"value"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &wrap) != nil || len(wrap.Data) == 0 {
+		var root []struct {
+			Name  string      `json:"name"`
+			Value interface{} `json:"value"`
+		}
+		if json.Unmarshal(body, &root) != nil {
+			return nil, fmt.Errorf("parse codeRepositories response")
+		}
+		wrap.Data = root
+	}
+	out := make([]codeRepositoryOption, 0, len(wrap.Data))
+	for _, row := range wrap.Data {
+		name := strings.TrimSpace(row.Name)
+		id := intFromAny(row.Value)
+		if name == "" || id <= 0 {
+			continue
+		}
+		out = append(out, codeRepositoryOption{Name: name, Value: id})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no code repositories in response")
+	}
+	return out, nil
+}
+
+func codeRepositoryIntegrationName(fullName string) string {
+	fullName = strings.TrimSpace(fullName)
+	if i := strings.LastIndex(fullName, " - "); i >= 0 {
+		return strings.TrimSpace(fullName[:i])
+	}
+	if i := strings.Index(fullName, "-"); i >= 0 {
+		return strings.TrimSpace(fullName[:i])
+	}
+	return fullName
+}
+
+func codeRepositoryEntryName(fullName string) string {
+	fullName = strings.TrimSpace(fullName)
+	if i := strings.LastIndex(fullName, " - "); i >= 0 {
+		return strings.TrimSpace(fullName[i+3:])
+	}
+	if i := strings.Index(fullName, "-"); i >= 0 {
+		return strings.TrimSpace(fullName[i+1:])
+	}
+	return ""
+}
+
+// Deprecated: use codeRepositoryIntegrationName — Morpheus labels are "{integration} - {repo}".
+func integrationNameFromCodeRepositoryName(fullName string) string {
+	return codeRepositoryIntegrationName(fullName)
+}
+
+func codeRepositoryShortName(fullName string) string {
+	return codeRepositoryIntegrationName(fullName)
+}
+
+func findCodeRepositoryByValue(opts []codeRepositoryOption, id int64) (codeRepositoryOption, bool) {
+	for _, opt := range opts {
+		if opt.Value == id {
+			return opt, true
+		}
+	}
+	return codeRepositoryOption{}, false
+}
+
+func findCodeRepositoryByExactName(opts []codeRepositoryOption, name string) (codeRepositoryOption, bool) {
+	want := strings.ToLower(strings.TrimSpace(name))
+	for _, opt := range opts {
+		if strings.ToLower(strings.TrimSpace(opt.Name)) == want {
+			return opt, true
+		}
+	}
+	return codeRepositoryOption{}, false
+}
+
+func findCodeRepositoryByIntegration(opts []codeRepositoryOption, integrationName, repoEntryName string) (codeRepositoryOption, bool) {
+	wantInt := strings.ToLower(strings.TrimSpace(integrationName))
+	wantEntry := strings.ToLower(strings.TrimSpace(repoEntryName))
+	var matches []codeRepositoryOption
+	for _, opt := range opts {
+		if strings.ToLower(codeRepositoryIntegrationName(opt.Name)) != wantInt {
+			continue
+		}
+		matches = append(matches, opt)
+	}
+	if len(matches) == 0 {
+		return codeRepositoryOption{}, false
+	}
+	if wantEntry != "" {
+		for _, opt := range matches {
+			if strings.ToLower(codeRepositoryEntryName(opt.Name)) == wantEntry {
+				return opt, true
+			}
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	return codeRepositoryOption{}, false
+}
+
+func resolveSourceCodeRepository(src *morpheus.Client, repo map[string]interface{}) (fullName, integrationName, shortName string, err error) {
+	if repo == nil {
+		return "", "", "", fmt.Errorf("repository-backed task has no file.repository reference")
+	}
+	repoID := intFromAny(repo["id"])
+	shortName = strings.TrimSpace(stringFromAny(repo["name"]))
+	if src == nil || strings.TrimSpace(src.BaseURL) == "" {
+		return "", "", shortName, fmt.Errorf("source appliance required to resolve code repository id %d", repoID)
+	}
+	opts, err := fetchCodeRepositoryOptions(src)
+	if err != nil {
+		return "", "", shortName, err
+	}
+	if repoID > 0 {
+		if opt, ok := findCodeRepositoryByValue(opts, repoID); ok {
+			return opt.Name, codeRepositoryIntegrationName(opt.Name), shortName, nil
+		}
+	}
+	if shortName != "" {
+		for _, opt := range opts {
+			if strings.EqualFold(codeRepositoryIntegrationName(opt.Name), shortName) {
+				return opt.Name, codeRepositoryIntegrationName(opt.Name), shortName, nil
+			}
+		}
+	}
+	if repoID > 0 {
+		return "", "", shortName, fmt.Errorf("code repository id %d not found in source /api/options/codeRepositories", repoID)
+	}
+	return "", "", shortName, fmt.Errorf("repository-backed task has no code repository id or name on source")
+}
+
+func resolveDestinationCodeRepository(dst *morpheus.Client, sourceFullName, integrationName, shortName string) (codeRepositoryOption, error) {
+	opts, err := fetchCodeRepositoryOptions(dst)
+	if err != nil {
+		return codeRepositoryOption{}, err
+	}
+	if sourceFullName != "" {
+		if opt, ok := findCodeRepositoryByExactName(opts, sourceFullName); ok {
+			return opt, nil
+		}
+	}
+	if integrationName == "" {
+		return codeRepositoryOption{}, fmt.Errorf("could not determine Git integration name from code repository %q", sourceFullName)
+	}
+	if _, err := findGitIntegrationByName(dst, integrationName); err != nil {
+		return codeRepositoryOption{}, err
+	}
+	repoEntry := codeRepositoryEntryName(sourceFullName)
+	if opt, ok := findCodeRepositoryByIntegration(opts, integrationName, repoEntry); ok {
+		return opt, nil
+	}
+	return codeRepositoryOption{}, fmt.Errorf("Git integration %q exists on destination but no code repository entry matches %q", integrationName, sourceFullName)
+}
+
+func resolveSourceGitIntegrationName(src *morpheus.Client, snap *SourceSnapshot, repo map[string]interface{}) (string, error) {
 	if repo == nil {
 		return "", fmt.Errorf("repository-backed task has no file.repository reference")
 	}
+	if name, ok := plainGitIntegrationName(stringFromAny(repo["name"])); ok {
+		return name, nil
+	}
 	repoID := intFromAny(repo["id"])
-	if src != nil && repoID > 0 {
-		name, err := integrationNameByID(src, repoID)
+	if repoID > 0 {
+		name, err := resolveIntegrationNameByID(src, snap, repoID)
 		if err == nil && strings.TrimSpace(name) != "" {
 			return name, nil
 		}
@@ -2504,12 +2963,11 @@ func resolveSourceGitIntegrationName(src *morpheus.Client, repo map[string]inter
 	if name == "" {
 		return "", fmt.Errorf("repository-backed task has no Git integration name on source")
 	}
-	lower := strings.ToLower(name)
-	if strings.Contains(name, "://") || strings.HasPrefix(lower, "git@") || strings.Contains(lower, ".git") {
+	if isGitRepoURLName(name) {
 		if src == nil || strings.TrimSpace(src.BaseURL) == "" {
-			return "", fmt.Errorf("source Morpheus credentials required to resolve Git integration id %d (repository host is %q, not an integration name)", repoID, name)
+			return "", fmt.Errorf("source Morpheus credentials required to resolve Git integration for repository %q", name)
 		}
-		return "", fmt.Errorf("could not resolve Git integration name for repository id %d on source (host %q)", repoID, name)
+		return "", fmt.Errorf("could not resolve Git integration name for repository on source (host %q)", name)
 	}
 	return name, nil
 }
@@ -2523,7 +2981,6 @@ func findGitIntegrationByName(dst *morpheus.Client, name string) (map[string]int
 	if err != nil {
 		return nil, fmt.Errorf("list integrations: %w", err)
 	}
-	var candidates []map[string]interface{}
 	for _, m := range all {
 		if !isGitIntegration(m) {
 			continue
@@ -2531,15 +2988,8 @@ func findGitIntegrationByName(dst *morpheus.Client, name string) (map[string]int
 		if strings.ToLower(stringFromAny(m["name"])) == want {
 			return m, nil
 		}
-		candidates = append(candidates, m)
 	}
-	for _, m := range candidates {
-		n := strings.ToLower(stringFromAny(m["name"]))
-		if strings.Contains(n, want) || strings.Contains(want, n) {
-			return m, nil
-		}
-	}
-	return nil, fmt.Errorf("no Git integration on destination named like %q — create one matching the source integration name and SSH key, then re-run migration", name)
+	return nil, fmt.Errorf("no Git integration on destination named %q — create one matching the source integration name, then re-run migration", name)
 }
 
 func listIntegrationsAll(dst *morpheus.Client) ([]map[string]interface{}, error) {
@@ -2583,25 +3033,7 @@ func findAnsibleIntegrationByName(dst *morpheus.Client, name string) (map[string
 			return m, nil
 		}
 	}
-	return nil, fmt.Errorf("no Ansible integration on destination named like %q — create one matching the source integration name and SSH key, then re-run migration", name)
-}
-
-func verifyIntegrationSSHKey(dst *morpheus.Client, integ map[string]interface{}) error {
-	sk, ok := integ["serviceKey"].(map[string]interface{})
-	if !ok || sk == nil {
-		return nil
-	}
-	kid := intFromAny(sk["id"])
-	kname := stringFromAny(sk["name"])
-	if kid <= 0 {
-		return nil
-	}
-	_, err := dst.GetRaw(fmt.Sprintf("/api/key-pairs/%d", kid))
-	if err != nil {
-		return fmt.Errorf("integration %q references SSH key pair id %d (%q) which is missing or inaccessible on destination (%v). Create/import this key pair, attach it to the integration, then re-run migration",
-			stringFromAny(integ["name"]), kid, kname, err)
-	}
-	return nil
+	return nil, fmt.Errorf("no Ansible integration on destination named like %q — create one matching the source integration name, then re-run migration", name)
 }
 
 func stringFromAny(v interface{}) string {

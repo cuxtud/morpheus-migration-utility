@@ -2,6 +2,36 @@
 
 Binaries and checksums are on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). The [Download](download.md) page links to the latest build.
 
+## v1.0.7
+
+**[Download v1.0.7](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.7)** · June 2026
+
+### Migration fixes
+
+- **Forms — library input references** — Library inputs on forms are resolved on the destination and attached as `{"id": <destination input id>}` only (inline form fields such as `group` keep their full definition). Fixes form create failures when source expanded definitions included wrong `optionList` ids.
+- **Tasks — task type remapping** — Destination task type is matched by `taskType.code` (e.g. `jythonTask`) via `/api/task-types`, not the source numeric id.
+- **Tasks — code repository resolution** — `file.repository.id` is resolved via `/api/options/codeRepositories` using the `{integration} - {repo}` label (integration prefix, repository suffix).
+- **Tasks — post-create verification** — Skips false partial/rollback when Morpheus GET omits the `file` block on the created task.
+
+### UI
+
+- **Verbose migration log** — Per-item step logs and payloads (on failure) appear in collapsible sections on the results page; activity log is preserved after migration completes.
+- **Collapsible logs** — Migration activity log during the run and per-result debug sections use expand/collapse; failures auto-expand.
+
+### Downloads (v1.0.7)
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `morpheus-snapshot-linux-amd64` |
+| Linux ARM64 | `morpheus-snapshot-linux-arm64` |
+| Windows x64 | `morpheus-snapshot-windows-amd64.exe` |
+| macOS Intel | `morpheus-snapshot-mac-intel` |
+| macOS Apple Silicon | `morpheus-snapshot-mac-apple-silicon` |
+
+Verify downloads with `checksums.txt` in the [release assets](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.7).
+
+---
+
 ## v1.0.6
 
 **[Download v1.0.6](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.6)** · June 2026
