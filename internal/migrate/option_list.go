@@ -38,6 +38,14 @@ func migrateOptionListWithAutomation(src, dst *morpheus.Client, item SelectedIte
 	}
 
 	existingID := findOptionTypeListIDByName(dst, name)
+	if existingID > 0 && !optionListNeedsUpdate(src, dst, obj, existingID) {
+		return ItemResult{
+			Name:    name,
+			Type:    item.Type,
+			Status:  "skipped",
+			Message: "Option list already exists and matches source",
+		}
+	}
 	outcome, dstID, err := writeOptionTypeList(src, dst, obj, existingID)
 	if err != nil {
 		status := "blocked"
@@ -179,6 +187,83 @@ func buildOptionTypeListWritePayload(src, dst *morpheus.Client, srcObj map[strin
 	}
 
 	return json.Marshal(map[string]interface{}{"optionTypeList": clone})
+}
+
+func optionListNeedsUpdate(src, dst *morpheus.Client, srcObj map[string]interface{}, destID int64) bool {
+	if destID <= 0 || srcObj == nil {
+		return true
+	}
+	destObj, err := fetchDestinationOptionTypeList(dst, destID)
+	if err != nil || destObj == nil {
+		return true
+	}
+	payload, err := buildOptionTypeListWritePayload(src, dst, srcObj)
+	if err != nil {
+		return true
+	}
+	var wrap map[string]json.RawMessage
+	if json.Unmarshal(payload, &wrap) != nil {
+		return true
+	}
+	var expected map[string]interface{}
+	if json.Unmarshal(wrap["optionTypeList"], &expected) != nil {
+		return true
+	}
+	return optionTypeListWritableContentEqual(expected, destObj)
+}
+
+func fetchDestinationOptionTypeList(dst *morpheus.Client, id int64) (map[string]interface{}, error) {
+	if dst == nil || id <= 0 {
+		return nil, fmt.Errorf("invalid option list id")
+	}
+	body, err := dst.GetRaw(fmt.Sprintf("/api/library/option-type-lists/%d", id))
+	if err != nil {
+		return nil, err
+	}
+	var wrap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		return nil, err
+	}
+	raw, ok := wrap["optionTypeList"]
+	if !ok {
+		return nil, fmt.Errorf("missing optionTypeList key")
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+var optionListCompareKeys = []string{"name", "description", "labels", "type", "config"}
+
+func optionTypeListWritableContentEqual(a, b map[string]interface{}) bool {
+	na := stripOptionListCompareMetadata(a)
+	nb := stripOptionListCompareMetadata(b)
+	if na == nil || nb == nil {
+		return false
+	}
+	for _, k := range optionListCompareKeys {
+		if !jsonEqualNormalized(na[k], nb[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+func stripOptionListCompareMetadata(obj map[string]interface{}) map[string]interface{} {
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		return nil
+	}
+	var clone map[string]interface{}
+	if json.Unmarshal(raw, &clone) != nil {
+		return nil
+	}
+	for _, k := range []string{"id", "dateCreated", "lastUpdated", "account", "accountId", "uuid", "owner", "stats"} {
+		delete(clone, k)
+	}
+	return clone
 }
 
 func validateAuthBackedOptionList(src, dst *morpheus.Client, obj map[string]interface{}, listName string, ldap bool) error {

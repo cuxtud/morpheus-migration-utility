@@ -405,29 +405,31 @@ func TestIsDuplicateErr_mustBeUnique(t *testing.T) {
 	}
 }
 
-func TestFindOptionTypeFormID_prefersNameOverCode(t *testing.T) {
+func TestFindOptionTypeFormID_nameOnly(t *testing.T) {
 	rows := []map[string]interface{}{
 		{"id": 10, "name": "LDAP Search", "code": "ldap-search-old"},
 		{"id": 20, "name": "Other Form", "code": "ldap-search"},
 	}
-	wantCode := strings.ToLower("ldap-search")
-	wantName := strings.ToLower("LDAP Search")
-	var byCode, byName int64
+	got := int64(0)
 	for _, row := range rows {
-		id := intFromAny(row["id"])
-		if strings.ToLower(stringFromAny(row["name"])) == wantName {
-			byName = id
+		if exactNameMatchKey(stringFromAny(row["name"])) == exactNameMatchKey("LDAP Search") {
+			got = intFromAny(row["id"])
+			break
 		}
-		if strings.ToLower(stringFromAny(row["code"])) == wantCode {
-			byCode = id
-		}
-	}
-	got := byName
-	if got == 0 {
-		got = byCode
 	}
 	if got != 10 {
-		t.Fatalf("name match should win: got id %d want 10 (byCode=%d byName=%d)", got, byCode, byName)
+		t.Fatalf("name-only match: got id %d want 10", got)
+	}
+	// Same code on a different form must not match when looking up by another name.
+	got = int64(0)
+	for _, row := range rows {
+		if exactNameMatchKey(stringFromAny(row["name"])) == exactNameMatchKey("LDAP Search Extended") {
+			got = intFromAny(row["id"])
+			break
+		}
+	}
+	if got != 0 {
+		t.Fatalf("partial/extra name must not match, got id %d", got)
 	}
 }
 
@@ -503,5 +505,41 @@ func TestFormNameMatch_exactOnlyFromOptionTypeFormsList(t *testing.T) {
 	}
 	if id := matchName("worldpay rhel"); id != 0 {
 		t.Fatalf("partial name must not match, got id %d", id)
+	}
+}
+
+func TestMapWorkflowOptionTypes_exactNameOnly(t *testing.T) {
+	nameToID := map[string]int64{
+		exactNameMatchKey("DBAList"):     10,
+		exactNameMatchKey("DBAList New"): 11,
+	}
+	opt := []interface{}{
+		map[string]interface{}{"code": "dbalist", "name": "DBAList"},
+		map[string]interface{}{"code": "other-code", "name": "DBAList New"},
+		map[string]interface{}{"code": "dbalist", "name": "Missing Input"},
+	}
+	ids, warn := mapWorkflowOptionTypes(opt, nameToID)
+	if len(ids) != 2 || ids[0] != int64(10) || ids[1] != int64(11) {
+		t.Fatalf("ids=%v want [10 11]", ids)
+	}
+	if !strings.Contains(warn, "Missing Input") {
+		t.Fatalf("warn=%q", warn)
+	}
+	if strings.Contains(warn, "dbalist") {
+		t.Fatalf("code must not appear in warn: %q", warn)
+	}
+}
+
+func TestResolveDestinationOptionTypeByName_noSubstringInIndex(t *testing.T) {
+	// DBAList must not resolve via DBAList New in the name index.
+	state := newAutomationState(nil)
+	state.destOptionNameToID = map[string]int64{
+		exactNameMatchKey("DBAList New"): 99,
+	}
+	if id := state.destOptionTypeIDByName("DBAList"); id != 0 {
+		t.Fatalf("DBAList matched id %d via substring index", id)
+	}
+	if id := state.destOptionTypeIDByName("DBAList New"); id != 99 {
+		t.Fatalf("exact DBAList New id=%d want 99", id)
 	}
 }

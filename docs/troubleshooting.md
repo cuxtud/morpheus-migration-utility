@@ -15,6 +15,7 @@
 | Form reported **exists** but name not on destination | Update to **v1.0.6+** — older builds could match by shared `code` instead of exact `name` |
 | Migration stream disconnected | Long runs may drop the browser stream; migration can continue server-side — check destination and server logs |
 | Form migration **HTTP 500** | Update to **v1.0.7+** for library-input id refs; enable **Verbose migration log** and expand the failed form row for payload details |
+| Input linked to wrong destination item | Update to **v1.0.8+** — inputs, form library inputs, and workflow option refs match by **exact name** only (`DBAList` ≠ `DBAList New`) |
 | Port 443 permission denied | Run as root or set `PORT=8443` |
 | Empty fleet after restart | Set `DATABASE_URL` or re-run discover |
 | `go run` / build errors on macOS | Use Go 1.22+; upgrade Go if linker errors on new macOS |

@@ -1,5 +1,5 @@
 BINARY   = morpheus-snapshot
-VERSION  = 1.0.7
+VERSION  = 1.0.8
 BUILD_DIR = dist
 CMD      = ./cmd/server
 

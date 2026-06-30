@@ -2,6 +2,33 @@
 
 Binaries and checksums are on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). The [Download](download.md) page links to the latest build.
 
+## v1.0.8
+
+**[Download v1.0.8](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.8)** · May 2026
+
+### Migration fixes
+
+- **Inputs — exact name matching** — Destination inputs are matched by **exact name** (trimmed, case-insensitive), not Morpheus `phrase=` search or shared `code`. Creates when missing, updates when content differs, skips when already in sync.
+- **Forms — name only** — Form lookup no longer falls back to `code`; only the exact form **name** resolves an existing destination form.
+- **Form library inputs — name only** — Library inputs on forms resolve existing destination inputs by **exact name** only (never `code` or `fieldName`).
+- **Workflows — option mapping by name** — Workflow input references map to destination option types by **name** only.
+- **Option lists — content sync** — Skips when an existing list with the same name already matches source content.
+- **Virtual images / Ansible** — Removed fuzzy `phrase=` and name-prefix fallbacks; matching is exact name only.
+
+### Downloads (v1.0.8)
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `morpheus-snapshot-linux-amd64` |
+| Linux ARM64 | `morpheus-snapshot-linux-arm64` |
+| Windows x64 | `morpheus-snapshot-windows-amd64.exe` |
+| macOS Intel | `morpheus-snapshot-mac-intel` |
+| macOS Apple Silicon | `morpheus-snapshot-mac-apple-silicon` |
+
+Verify downloads with `checksums.txt` in the [release assets](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.8).
+
+---
+
 ## v1.0.7
 
 **[Download v1.0.7](https://github.com/cuxtud/morpheus-migration-utility/releases/tag/v1.0.7)** · June 2026

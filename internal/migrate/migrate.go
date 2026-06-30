@@ -720,20 +720,8 @@ func findDestinationVirtualImageIDByName(dst *morpheus.Client, sourceName string
 		return 0, nil
 	}
 	escaped := url.QueryEscape(name)
-	queries := []string{
-		fmt.Sprintf("/api/virtual-images?max=100&offset=0&name=%s&filterType=All", escaped),
-		fmt.Sprintf("/api/virtual-images?phrase=%s&max=100&offset=0", escaped),
-	}
-	for _, path := range queries {
-		id, err := virtualImageIDFromListQuery(dst, path, name)
-		if err != nil {
-			return 0, err
-		}
-		if id > 0 {
-			return id, nil
-		}
-	}
-	return 0, nil
+	path := fmt.Sprintf("/api/virtual-images?max=100&offset=0&name=%s&filterType=All", escaped)
+	return virtualImageIDFromListQuery(dst, path, name)
 }
 
 func virtualImageIDFromListQuery(dst *morpheus.Client, path, wantName string) (int64, error) {

@@ -413,32 +413,30 @@ func ensureOptionTypeIDs(src, dst *morpheus.Client, opt interface{}, state *auto
 		if !ok {
 			continue
 		}
+		name := strings.TrimSpace(stringFromAny(om["name"]))
 		code := strings.TrimSpace(stringFromAny(om["code"]))
 		if code == "" {
 			code = strings.TrimSpace(stringFromAny(om["fieldName"]))
 		}
-		if code == "" {
-			code = strings.TrimSpace(stringFromAny(om["name"]))
-		}
-		if code == "" {
+		if name == "" && code == "" {
 			continue
 		}
-		state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", code))
-		if state.destOptionTypeID(code) > 0 {
-			continue
+		label := name
+		if label == "" {
+			label = code
 		}
-		state.reportStep(fmt.Sprintf("Creating input %q on destination", code))
-		id, err := createOptionTypeOnDestination(src, dst, om, code)
-		if err != nil {
+		state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", label))
+		if _, outcome, err := syncOptionTypeOnDestination(src, dst, state, om, name, code); err != nil {
 			return nil, "", &ItemResult{
 				Name: parentName, Status: "blocked",
-				Message: fmt.Sprintf("could not create input %q on destination: %v", code, err),
+				Message: fmt.Sprintf("could not create input %q on destination: %v", label, err),
 			}
+		} else if outcome == "created" {
+			state.reportStep(fmt.Sprintf("Created input %q on destination", label))
 		}
-		state.setDestOptionTypeID(code, id)
 	}
 	state.reloadDestOptionTypes(dst)
-	ids, warn := mapWorkflowOptionTypes(opt, state.destOptionTypeMapCopy())
+	ids, warn := mapWorkflowOptionTypes(opt, state.destOptionTypeNameMapCopy())
 	return ids, warn, nil
 }
 

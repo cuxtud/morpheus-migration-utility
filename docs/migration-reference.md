@@ -1,6 +1,6 @@
 # Migration reference
 
-Current release: **v1.0.7**. See [Release notes](releases.md) for version history.
+Current release: **v1.0.8**. See [Release notes](releases.md) for version history.
 
 ## What gets migrated
 
@@ -10,8 +10,8 @@ Current release: **v1.0.7**. See [Release notes](releases.md) for version histor
 |----------|------|-----------|-------|
 | Tasks | `task` | ✅ | Task type remapped by `taskType.code` (`/api/task-types`); code repos via `/api/options/codeRepositories` |
 | Workflows | `workflow` | ✅ | Related tasks auto-included; task names must resolve on destination |
-| Inputs | `input` | ✅ | Option types; list-backed inputs can create option lists on destination |
-| Option Lists | `optionList` | ✅ | Standalone selection or via inputs/forms; plugin/inline-auth lists may be **blocked** |
+| Inputs | `input` | ✅ | Matched on destination by **exact name**; creates when missing, updates when content differs; list-backed inputs can create option lists on destination |
+| Option Lists | `optionList` | ✅ | Exact **name** match; creates when missing, updates when content differs; plugin/inline-auth lists may be **blocked** |
 | Forms | `form` | ✅ | Exact name match on destination; updates when content differs; may inline-create missing inputs |
 | Instance Types | `instanceType` | ✅ | User-created types only; **system** seeded types are **skipped** |
 | Layouts | `layout` | ✅ | Often auto-included with instance types |
@@ -83,7 +83,7 @@ When migration uses a saved discovery (`discoveryId` from PostgreSQL), the serve
 
 ### Form matching (v1.0.6+)
 
-Destination forms are resolved from `GET /api/library/option-type-forms` by **exact** `name` match (trimmed, case-insensitive). A different form with the same `code` is **not** treated as a match.
+Destination forms are resolved from `GET /api/library/option-type-forms` by **exact name only** (trimmed, case-insensitive). Shared `code` is **not** used to match a different form.
 
 When the name exists on the destination, migration compares field groups and options:
 
@@ -95,9 +95,7 @@ Catalog items always run this form sync; they no longer link to a destination fo
 
 ### Form library inputs (v1.0.7+)
 
-When a form references **library inputs** (`formField: false`), migration ensures each input exists on the destination (creating it with remapped option lists when needed), then attaches it to the form as **`{"id": <destination option-type id>}`** only — in `fieldGroups[].options` and in root `options[]` when the source API returns expanded definitions there.
-
-**Inline form fields** (`formField: true`, e.g. `type: "group"`) remain full field definitions in `options[]`.
+When a form references **library inputs** (`formField: false`), migration resolves each input on the destination by **exact name only** (never by `code`). If the name exists, the form links `{"id": <destination option-type id>}`; if not, the input is created first (with remapped option lists when needed).
 
 ## Outcome statuses
 

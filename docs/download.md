@@ -1,6 +1,6 @@
 # Download
 
-Pre-built binaries are published on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). Links below always point at the **latest** release. See **[Release notes](releases.md)** for what changed in v1.0.7 and earlier versions.
+Pre-built binaries are published on [GitHub Releases](https://github.com/cuxtud/morpheus-migration-utility/releases). Links below always point at the **latest** release. See **[Release notes](releases.md)** for what changed in v1.0.8 and earlier versions.
 
 ## Binaries
 

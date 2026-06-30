@@ -134,7 +134,7 @@ func (s *automationState) ensureDestFormIndex(dst *morpheus.Client) error {
 		if id <= 0 {
 			continue
 		}
-		if name := strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))); name != "" {
+		if name := exactNameMatchKey(stringFromAny(row["name"])); name != "" {
 			c.formByName[name] = id
 		}
 		if code := strings.ToLower(strings.TrimSpace(stringFromAny(row["code"]))); code != "" {
@@ -145,20 +145,16 @@ func (s *automationState) ensureDestFormIndex(dst *morpheus.Client) error {
 	return nil
 }
 
-func (s *automationState) findDestFormID(dst *morpheus.Client, code, name string) int64 {
+func (s *automationState) findDestFormID(dst *morpheus.Client, _code, name string) int64 {
+	wantName := exactNameMatchKey(name)
+	if wantName == "" {
+		return 0
+	}
 	_ = s.ensureDestFormIndex(dst)
-	wantName := strings.ToLower(strings.TrimSpace(name))
-	wantCode := strings.ToLower(strings.TrimSpace(code))
 	c := s.destCache()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if wantName != "" {
-		return c.formByName[wantName]
-	}
-	if wantCode != "" {
-		return c.formByCode[wantCode]
-	}
-	return 0
+	return c.formByName[wantName]
 }
 
 func (s *automationState) destFormIDForSource(srcFormID int64) int64 {

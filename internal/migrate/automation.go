@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +20,7 @@ type automationState struct {
 	destTaskTypeByCode  map[string]map[string]interface{}
 	destWorkflowKeyToID map[string]int64 // name + "\x00" + type
 	destOptionCodeToID  map[string]int64
+	destOptionNameToID map[string]int64 // lowercase trimmed name -> id
 	optionTypesLoadErr  string
 	progress            ProgressFunc
 	catalogCache        *catalogDestCache
@@ -35,6 +35,7 @@ func newAutomationState(snap *SourceSnapshot) *automationState {
 		destTaskTypeByCode:  map[string]map[string]interface{}{},
 		destWorkflowKeyToID: map[string]int64{},
 		destOptionCodeToID:  map[string]int64{},
+		destOptionNameToID:  map[string]int64{},
 		sourceSnap:          snap,
 	}
 }
@@ -181,6 +182,32 @@ func (s *automationState) destOptionTypeID(code string) int64 {
 	return s.destOptionCodeToID[code]
 }
 
+func exactNameMatchKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func (s *automationState) destOptionTypeIDByName(name string) int64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.destOptionNameToID[exactNameMatchKey(name)]
+}
+
+func (s *automationState) setDestOptionTypeNameID(name string, id int64) {
+	if s == nil || id <= 0 {
+		return
+	}
+	key := exactNameMatchKey(name)
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.destOptionNameToID[key] = id
+}
+
 func (s *automationState) setDestOptionTypeID(code string, id int64) {
 	if s == nil || code == "" || id <= 0 {
 		return
@@ -201,6 +228,38 @@ func (s *automationState) destOptionTypeMapCopy() map[string]int64 {
 		out[k] = v
 	}
 	return out
+}
+
+func (s *automationState) destOptionTypeNameMapCopy() map[string]int64 {
+	if s == nil {
+		return map[string]int64{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int64, len(s.destOptionNameToID))
+	for k, v := range s.destOptionNameToID {
+		out[k] = v
+	}
+	return out
+}
+
+func resolveDestinationOptionTypeByName(state *automationState, dst *morpheus.Client, name string) int64 {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0
+	}
+	state.loadDestOptionTypes(dst)
+	if id := state.destOptionTypeIDByName(name); id > 0 {
+		return id
+	}
+	id := findOptionTypeIDByExactName(dst, name)
+	if id > 0 {
+		state.setDestOptionTypeNameID(name, id)
+		if code := findOptionTypeCodeByID(dst, id); code != "" {
+			state.setDestOptionTypeID(code, id)
+		}
+	}
+	return id
 }
 
 func (s *automationState) optionTypesLoadError() string {
@@ -236,6 +295,7 @@ func (s *automationState) reloadDestOptionTypes(dst *morpheus.Client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.destOptionCodeToID = map[string]int64{}
+	s.destOptionNameToID = map[string]int64{}
 	s.optionTypesLoadErr = ""
 	s.fetchOptionTypesFromDestinationLocked(dst)
 }
@@ -261,8 +321,12 @@ func (s *automationState) fetchOptionTypesFromDestinationLocked(dst *morpheus.Cl
 			}
 			id := intFromAny(row["id"])
 			code := strings.TrimSpace(stringFromAny(row["code"]))
+			name := strings.TrimSpace(stringFromAny(row["name"]))
 			if code != "" && id > 0 {
 				s.destOptionCodeToID[code] = id
+			}
+			if name != "" && id > 0 {
+				s.destOptionNameToID[exactNameMatchKey(name)] = id
 			}
 		}
 		if len(s.destOptionCodeToID) > 0 {
@@ -428,26 +492,68 @@ func ensureMissingOptionTypes(src, dst *morpheus.Client, wf map[string]interface
 		if !ok {
 			continue
 		}
+		name := strings.TrimSpace(stringFromAny(om["name"]))
 		code := strings.TrimSpace(stringFromAny(om["code"]))
 		if code == "" {
-			code = strings.TrimSpace(stringFromAny(om["name"]))
+			code = strings.TrimSpace(stringFromAny(om["fieldName"]))
 		}
-		if code == "" {
+		if name == "" && code == "" {
 			continue
 		}
-		if state.destOptionTypeID(code) > 0 {
-			continue
+		if _, _, err := syncOptionTypeOnDestination(src, dst, state, om, name, code); err != nil {
+			label := name
+			if label == "" {
+				label = code
+			}
+			return &ItemResult{Name: wfName, Type: "workflow", Status: "blocked", Message: fmt.Sprintf("could not create inputs field %q on destination: %v", label, err)}
 		}
-
-		id, err := createOptionTypeOnDestination(src, dst, om, code)
-		if err != nil {
-			return &ItemResult{Name: wfName, Type: "workflow", Status: "blocked", Message: fmt.Sprintf("could not create inputs field %q on destination: %v", code, err)}
-		}
-		state.setDestOptionTypeID(code, id)
 	}
 
 	state.reloadDestOptionTypes(dst)
 	return nil
+}
+
+func syncOptionTypeOnDestination(src, dst *morpheus.Client, state *automationState, obj map[string]interface{}, name, code string) (destID int64, outcome string, err error) {
+	if name == "" {
+		name = strings.TrimSpace(stringFromAny(obj["name"]))
+	}
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(obj["code"]))
+	}
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(obj["fieldName"]))
+	}
+	if code == "" {
+		code = name
+	}
+	if name == "" {
+		return 0, "", fmt.Errorf("input missing name")
+	}
+
+	existingID := resolveDestinationOptionTypeByName(state, dst, name)
+	if existingID > 0 {
+		if !optionTypeNeedsUpdate(src, dst, obj, code, existingID) {
+			return existingID, "skipped", nil
+		}
+		payload, err := buildOptionTypePayload(src, dst, obj, code)
+		if err != nil {
+			return 0, "", err
+		}
+		if _, err := dst.PutRaw(fmt.Sprintf("/api/library/option-types/%d", existingID), payload); err != nil {
+			return 0, "", err
+		}
+		state.setDestOptionTypeID(code, existingID)
+		state.setDestOptionTypeNameID(name, existingID)
+		return existingID, "updated", nil
+	}
+
+	id, err := createOptionTypeOnDestination(src, dst, obj, code)
+	if err != nil {
+		return 0, "", err
+	}
+	state.setDestOptionTypeID(code, id)
+	state.setDestOptionTypeNameID(name, id)
+	return id, "created", nil
 }
 
 func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
@@ -475,27 +581,19 @@ func migrateInputWithAutomation(src, dst *morpheus.Client, item SelectedItem, st
 
 	state.reportStep(fmt.Sprintf("Checking if input %q exists on destination", name))
 	state.reloadDestOptionTypes(dst)
-	if existingID := state.destOptionTypeID(code); existingID > 0 {
-		state.reportStep(fmt.Sprintf("Input %q found on destination — updating", name))
-		payload, err := buildOptionTypePayload(src, dst, obj, code)
-		if err != nil {
-			return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("prepare input payload: %v", err)}
-		}
-		_, err = dst.PutRaw(fmt.Sprintf("/api/library/option-types/%d", existingID), payload)
-		if err != nil {
-			return ItemResult{Name: name, Type: item.Type, Status: "error", Message: fmt.Sprintf("update input: %v", err)}
-		}
-		state.reloadDestOptionTypes(dst)
-		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "updated", Message: "Updated input on destination"}
-	}
-
-	state.reportStep(fmt.Sprintf("Creating input %q on destination", name))
-	_, err := createOptionTypeOnDestination(src, dst, obj, code)
+	_, outcome, err := syncOptionTypeOnDestination(src, dst, state, obj, name, code)
 	if err != nil {
-		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("create input: %v", err)}
+		return ItemResult{Name: name, Type: item.Type, Status: "blocked", Message: fmt.Sprintf("sync input: %v", err)}
 	}
 	state.reloadDestOptionTypes(dst)
-	return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created input on destination"}
+	switch outcome {
+	case "skipped":
+		return ItemResult{Name: name, Type: item.Type, Status: "skipped", Message: "Input already exists and matches source"}
+	case "updated":
+		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "updated", Message: "Updated input on destination"}
+	default:
+		return ItemResult{Name: name, Type: item.Type, Status: "success", Outcome: "created", Message: "Created input on destination"}
+	}
 }
 
 func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
@@ -532,9 +630,6 @@ func migrateFormWithAutomation(src, dst *morpheus.Client, item SelectedItem, sta
 	}
 
 	existingID := findOptionTypeFormIDByName(dst, name)
-	if existingID <= 0 && formCode != "" {
-		existingID = findOptionTypeFormIDByCode(dst, formCode)
-	}
 	if state != nil {
 		if existingID > 0 {
 			state.itemDebug(fmt.Sprintf("Destination form lookup: matched id=%d (exact name %q)", existingID, name))
@@ -797,51 +892,40 @@ func resolveFormOptionLibraryRef(src, dst *morpheus.Client, state *automationSta
 }
 
 func ensureLibraryInputOnDestination(src, dst *morpheus.Client, state *automationState, ref map[string]interface{}) (int64, error) {
-	code := strings.TrimSpace(stringFromAny(ref["code"]))
-	if code == "" {
-		code = strings.TrimSpace(stringFromAny(ref["fieldName"]))
-	}
-
-	state.reloadDestOptionTypes(dst)
-	if code != "" {
-		if id := state.destOptionTypeID(code); id > 0 {
-			return id, nil
-		}
-	}
-
+	name := strings.TrimSpace(stringFromAny(ref["name"]))
 	inputObj := ref
 	srcID := intFromAny(ref["id"])
-	if srcID > 0 && src != nil {
+	if srcID > 0 && src != nil && (name == "" || isFormLibraryInputIDRef(ref)) {
 		fresh, err := fetchFullOptionType(src, srcID)
 		if err != nil {
 			return 0, err
 		}
 		inputObj = fresh
+		if name == "" {
+			name = strings.TrimSpace(stringFromAny(inputObj["name"]))
+		}
 	}
-	if code == "" {
-		code = strings.TrimSpace(stringFromAny(inputObj["code"]))
+	if name == "" {
+		name = strings.TrimSpace(stringFromAny(inputObj["name"]))
 	}
-	if code == "" {
-		code = strings.TrimSpace(stringFromAny(inputObj["fieldName"]))
-	}
-	if code == "" {
-		return 0, fmt.Errorf("library input missing code")
+	if name == "" {
+		return 0, fmt.Errorf("library input missing name")
 	}
 
-	if id := state.destOptionTypeID(code); id > 0 {
+	state.reloadDestOptionTypes(dst)
+	if id := resolveDestinationOptionTypeByName(state, dst, name); id > 0 {
 		return id, nil
 	}
 
-	label := strings.TrimSpace(stringFromAny(inputObj["name"]))
-	if label == "" {
-		label = code
+	code := strings.TrimSpace(stringFromAny(inputObj["code"]))
+	if code == "" {
+		code = strings.TrimSpace(stringFromAny(inputObj["fieldName"]))
 	}
-	state.reportStep(fmt.Sprintf("Creating input %q for form", label))
-	id, err := createOptionTypeOnDestination(src, dst, inputObj, code)
+	state.reportStep(fmt.Sprintf("Creating input %q for form", name))
+	id, _, err := syncOptionTypeOnDestination(src, dst, state, inputObj, name, code)
 	if err != nil {
 		return 0, err
 	}
-	state.setDestOptionTypeID(code, id)
 	return id, nil
 }
 
@@ -856,21 +940,25 @@ func resolveDestinationFormID(src, dst *morpheus.Client, state *automationState,
 		}
 	}
 
-	lookup := func(code, name string) int64 {
+	lookup := func(name string) int64 {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return 0
+		}
 		var id int64
 		if state != nil {
-			id = state.findDestFormID(dst, code, name)
+			id = state.findDestFormID(dst, "", name)
 		}
 		if id <= 0 {
-			id = findOptionTypeFormID(dst, code, name)
+			id = findOptionTypeFormIDByName(dst, name)
 			if id > 0 && state != nil {
-				state.registerDestForm(id, code, name, srcFormID)
+				state.registerDestForm(id, formCode, name, srcFormID)
 			}
 		}
 		return id
 	}
 
-	destID = lookup(formCode, formName)
+	destID = lookup(formName)
 	if destID > 0 {
 		return formCode, formName, destID
 	}
@@ -883,23 +971,15 @@ func resolveDestinationFormID(src, dst *morpheus.Client, state *automationState,
 		if formName == "" {
 			formName = strings.TrimSpace(stringFromAny(formObj["name"]))
 		}
-		if destID = lookup(formCode, formName); destID > 0 {
+		if destID = lookup(formName); destID > 0 {
 			return formCode, formName, destID
 		}
 	}
 
 	// Catalog payloads sometimes embed a display label that differs from the library form name.
 	for _, n := range uniqueNonEmptyStrings(formName, strings.TrimSpace(stringFromAny(ref["name"]))) {
-		if destID = lookup("", n); destID > 0 {
+		if destID = lookup(n); destID > 0 {
 			return formCode, n, destID
-		}
-	}
-	// Code-only lookup when no name is available (never match a different form by code alone).
-	if strings.TrimSpace(formName) == "" && strings.TrimSpace(stringFromAny(ref["name"])) == "" {
-		for _, c := range uniqueNonEmptyStrings(formCode, strings.TrimSpace(stringFromAny(ref["code"]))) {
-			if destID = lookup(c, ""); destID > 0 {
-				return c, formName, destID
-			}
 		}
 	}
 
@@ -1523,19 +1603,9 @@ func buildOptionTypeFormPayload(src, dst *morpheus.Client, form map[string]inter
 	return json.Marshal(map[string]interface{}{"optionTypeForm": root})
 }
 
-// findOptionTypeFormID resolves an existing destination form by exact name and/or code.
-// When name is provided, only an exact name match counts — code alone must not match a
-// different form (Morpheus names are globally unique; code can be reused across forms).
-func findOptionTypeFormID(dst *morpheus.Client, code, name string) int64 {
-	wantCode := strings.ToLower(strings.TrimSpace(code))
-	wantName := strings.ToLower(strings.TrimSpace(name))
-	if wantCode == "" && wantName == "" {
-		return 0
-	}
-	if wantName != "" {
-		return findOptionTypeFormIDByName(dst, name)
-	}
-	return findOptionTypeFormIDByCode(dst, code)
+// findOptionTypeFormID resolves an existing destination form by exact name only.
+func findOptionTypeFormID(dst *morpheus.Client, _code, name string) int64 {
+	return findOptionTypeFormIDByName(dst, name)
 }
 
 func listDestinationOptionTypeForms(dst *morpheus.Client) ([]map[string]interface{}, error) {
@@ -1557,25 +1627,8 @@ func listDestinationOptionTypeForms(dst *morpheus.Client) ([]map[string]interfac
 	return rows, nil
 }
 
-func findOptionTypeFormIDByCode(dst *morpheus.Client, code string) int64 {
-	wantCode := strings.ToLower(strings.TrimSpace(code))
-	if wantCode == "" {
-		return 0
-	}
-	rows, err := listDestinationOptionTypeForms(dst)
-	if err != nil {
-		return 0
-	}
-	for _, row := range rows {
-		if strings.ToLower(strings.TrimSpace(stringFromAny(row["code"]))) == wantCode {
-			return intFromAny(row["id"])
-		}
-	}
-	return 0
-}
-
 func findOptionTypeFormIDByName(dst *morpheus.Client, name string) int64 {
-	wantName := strings.ToLower(strings.TrimSpace(name))
+	wantName := exactNameMatchKey(name)
 	if wantName == "" {
 		return 0
 	}
@@ -1584,7 +1637,7 @@ func findOptionTypeFormIDByName(dst *morpheus.Client, name string) int64 {
 		return 0
 	}
 	for _, row := range rows {
-		if strings.ToLower(strings.TrimSpace(stringFromAny(row["name"]))) == wantName {
+		if exactNameMatchKey(stringFromAny(row["name"])) == wantName {
 			return intFromAny(row["id"])
 		}
 	}
@@ -1857,39 +1910,26 @@ func parseOptionTypeIDFromResponse(body []byte) int64 {
 }
 
 func findOptionTypeIDByCode(dst *morpheus.Client, code string) int64 {
-	code = strings.TrimSpace(code)
-	if code == "" {
+	return findOptionTypeIDByExactCode(dst, code)
+}
+
+func findOptionTypeIDByExactName(dst *morpheus.Client, name string) int64 {
+	want := exactNameMatchKey(name)
+	if want == "" {
 		return 0
 	}
-	want := strings.ToLower(code)
-	paths := []string{
-		fmt.Sprintf("/api/library/option-types?phrase=%s&max=100&offset=0", url.QueryEscape(code)),
-		fmt.Sprintf("/api/options/types?phrase=%s&max=100&offset=0", url.QueryEscape(code)),
-	}
-	for _, path := range paths {
-		body, err := dst.GetRaw(path)
+	for _, path := range []string{"/api/library/option-types", "/api/options/types", "/api/option-types"} {
+		raws, err := paginateList(dst, path, "optionTypes")
 		if err != nil {
 			continue
 		}
-		var wrapper map[string]json.RawMessage
-		if json.Unmarshal(body, &wrapper) != nil {
-			continue
-		}
-		raw, ok := wrapper["optionTypes"]
-		if !ok {
-			continue
-		}
-		var items []json.RawMessage
-		if json.Unmarshal(raw, &items) != nil {
-			continue
-		}
-		for _, it := range items {
+		for _, raw := range raws {
 			var row map[string]interface{}
-			if json.Unmarshal(it, &row) != nil {
+			if json.Unmarshal(raw, &row) != nil {
 				continue
 			}
-			c := strings.TrimSpace(stringFromAny(row["code"]))
-			if strings.ToLower(c) != want {
+			n := exactNameMatchKey(stringFromAny(row["name"]))
+			if n != want {
 				continue
 			}
 			if id := intFromAny(row["id"]); id > 0 {
@@ -1898,6 +1938,153 @@ func findOptionTypeIDByCode(dst *morpheus.Client, code string) int64 {
 		}
 	}
 	return 0
+}
+
+func findOptionTypeIDByExactCode(dst *morpheus.Client, code string) int64 {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return 0
+	}
+	want := strings.ToLower(code)
+	for _, path := range []string{"/api/library/option-types", "/api/options/types", "/api/option-types"} {
+		raws, err := paginateList(dst, path, "optionTypes")
+		if err != nil {
+			continue
+		}
+		for _, raw := range raws {
+			var row map[string]interface{}
+			if json.Unmarshal(raw, &row) != nil {
+				continue
+			}
+			c := strings.ToLower(strings.TrimSpace(stringFromAny(row["code"])))
+			if c != want {
+				continue
+			}
+			if id := intFromAny(row["id"]); id > 0 {
+				return id
+			}
+		}
+	}
+	return 0
+}
+
+func findOptionTypeCodeByID(dst *morpheus.Client, id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	body, err := dst.GetRaw(fmt.Sprintf("/api/library/option-types/%d", id))
+	if err != nil {
+		return ""
+	}
+	var wrap map[string]json.RawMessage
+	if json.Unmarshal(body, &wrap) != nil {
+		return ""
+	}
+	raw, ok := wrap["optionType"]
+	if !ok {
+		return ""
+	}
+	var row map[string]interface{}
+	if json.Unmarshal(raw, &row) != nil {
+		return ""
+	}
+	return strings.TrimSpace(stringFromAny(row["code"]))
+}
+
+func fetchDestinationOptionType(dst *morpheus.Client, id int64) (map[string]interface{}, error) {
+	if dst == nil || id <= 0 {
+		return nil, fmt.Errorf("invalid option type id")
+	}
+	paths := []string{
+		fmt.Sprintf("/api/library/option-types/%d", id),
+		fmt.Sprintf("/api/options/types/%d", id),
+	}
+	var lastErr error
+	for _, path := range paths {
+		body, err := dst.GetRaw(path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var wrap map[string]json.RawMessage
+		if err := json.Unmarshal(body, &wrap); err != nil {
+			lastErr = err
+			continue
+		}
+		raw, ok := wrap["optionType"]
+		if !ok {
+			lastErr = fmt.Errorf("missing optionType key")
+			continue
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			lastErr = err
+			continue
+		}
+		return obj, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("could not fetch option type id %d", id)
+}
+
+var optionTypeCompareKeys = []string{
+	"name", "code", "description", "labels", "type", "optionSource", "optionList",
+	"config", "required", "fieldName", "fieldLabel", "fieldContext", "defaultValue",
+	"helpBlock", "visibleOnCode", "requireOnCode", "dependsOnCode", "displayOrder",
+}
+
+func optionTypeNeedsUpdate(src, dst *morpheus.Client, srcObj map[string]interface{}, code string, destID int64) bool {
+	if destID <= 0 || srcObj == nil {
+		return true
+	}
+	destObj, err := fetchDestinationOptionType(dst, destID)
+	if err != nil || destObj == nil {
+		return true
+	}
+	payload, err := buildOptionTypePayload(src, dst, srcObj, code)
+	if err != nil {
+		return true
+	}
+	var wrap map[string]json.RawMessage
+	if json.Unmarshal(payload, &wrap) != nil {
+		return true
+	}
+	var expected map[string]interface{}
+	if json.Unmarshal(wrap["optionType"], &expected) != nil {
+		return true
+	}
+	return !optionTypeWritableContentEqual(expected, destObj)
+}
+
+func optionTypeWritableContentEqual(a, b map[string]interface{}) bool {
+	na := stripOptionTypeCompareMetadata(a)
+	nb := stripOptionTypeCompareMetadata(b)
+	if na == nil || nb == nil {
+		return false
+	}
+	for _, k := range optionTypeCompareKeys {
+		if !jsonEqualNormalized(na[k], nb[k]) {
+			return false
+		}
+	}
+	return true
+}
+
+func stripOptionTypeCompareMetadata(obj map[string]interface{}) map[string]interface{} {
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		return nil
+	}
+	var clone map[string]interface{}
+	if json.Unmarshal(raw, &clone) != nil {
+		return nil
+	}
+	for _, k := range []string{"id", "dateCreated", "lastUpdated", "account", "accountId", "uuid", "owner", "stats"} {
+		delete(clone, k)
+	}
+	return clone
 }
 
 func migrateTaskWithAutomation(src, dst *morpheus.Client, item SelectedItem, state *automationState) ItemResult {
@@ -2350,7 +2537,7 @@ func migrateWorkflowWithAutomation(src, dst *morpheus.Client, item SelectedItem,
 	}
 
 	state.reloadDestOptionTypes(dst)
-	optIDs, optWarn := mapWorkflowOptionTypes(obj["optionTypes"], state.destOptionTypeMapCopy())
+	optIDs, optWarn := mapWorkflowOptionTypes(obj["optionTypes"], state.destOptionTypeNameMapCopy())
 
 	out := map[string]interface{}{
 		"type":              wfType,
@@ -2487,7 +2674,7 @@ func buildWorkflowTasksPayload(wf map[string]interface{}, destNameToID map[strin
 	return out, nil
 }
 
-func mapWorkflowOptionTypes(opt interface{}, codeToID map[string]int64) ([]interface{}, string) {
+func mapWorkflowOptionTypes(opt interface{}, nameToID map[string]int64) ([]interface{}, string) {
 	arr, ok := opt.([]interface{})
 	if !ok || len(arr) == 0 {
 		return []interface{}{}, ""
@@ -2504,14 +2691,15 @@ func mapWorkflowOptionTypes(opt interface{}, codeToID map[string]int64) ([]inter
 			n, _ := v.Int64()
 			ids = append(ids, n)
 		case map[string]interface{}:
-			code := strings.TrimSpace(stringFromAny(v["code"]))
-			if code == "" {
-				code = strings.TrimSpace(stringFromAny(v["name"]))
+			name := strings.TrimSpace(stringFromAny(v["name"]))
+			if name == "" {
+				missing = append(missing, "(unnamed input)")
+				continue
 			}
-			if id, ok := codeToID[code]; ok && id > 0 {
+			if id := nameToID[exactNameMatchKey(name)]; id > 0 {
 				ids = append(ids, id)
-			} else if code != "" {
-				missing = append(missing, code)
+			} else {
+				missing = append(missing, name)
 			}
 		default:
 			// unknown shape — skip
@@ -2519,7 +2707,7 @@ func mapWorkflowOptionTypes(opt interface{}, codeToID map[string]int64) ([]inter
 	}
 	warn := ""
 	if len(missing) > 0 {
-		warn = fmt.Sprintf("option types not found on destination by code: %s (create them or map manually)", strings.Join(missing, ", "))
+		warn = fmt.Sprintf("option types not found on destination by exact name: %s (create them or map manually)", strings.Join(missing, ", "))
 	}
 	return ids, warn
 }
@@ -3016,7 +3204,6 @@ func findAnsibleIntegrationByName(dst *morpheus.Client, name string) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("list integrations: %w", err)
 	}
-	var candidates []map[string]interface{}
 	for _, m := range all {
 		if !isAnsibleIntegration(m) {
 			continue
@@ -3024,16 +3211,8 @@ func findAnsibleIntegrationByName(dst *morpheus.Client, name string) (map[string
 		if strings.ToLower(stringFromAny(m["name"])) == want {
 			return m, nil
 		}
-		candidates = append(candidates, m)
 	}
-	// prefix / contains
-	for _, m := range candidates {
-		n := strings.ToLower(stringFromAny(m["name"]))
-		if strings.Contains(n, want) || strings.Contains(want, n) {
-			return m, nil
-		}
-	}
-	return nil, fmt.Errorf("no Ansible integration on destination named like %q — create one matching the source integration name, then re-run migration", name)
+	return nil, fmt.Errorf("no Ansible integration on destination named %q — create one matching the source integration name, then re-run migration", name)
 }
 
 func stringFromAny(v interface{}) string {
