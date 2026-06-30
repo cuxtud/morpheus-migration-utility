@@ -1,0 +1,25 @@
+{#-
+  Copyright, download counter, and theme information
+-#}
+<div class="md-copyright">
+  <p class="md-download-count" id="github-download-count" aria-live="polite">
+    <span class="md-download-count__value" aria-hidden="true">…</span>
+    <span class="md-download-count__label">release downloads</span>
+  </p>
+  {% if config.copyright %}
+    <div class="md-copyright__highlight">
+      {{ config.copyright }}
+    </div>
+  {% endif %}
+  {% if not config.extra.generator == false %}
+    Made with
+    <a
+      href="https://squidfunk.github.io/mkdocs-material/"
+      target="_blank"
+      rel="noopener"
+      class="md-copyright__link"
+    >
+      Material for MkDocs
+    </a>
+  {% endif %}
+</div>
